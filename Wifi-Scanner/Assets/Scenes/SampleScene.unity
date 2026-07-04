@@ -304,7 +304,7 @@ MonoBehaviour:
   enableStreaming: 1
   pcIp: 192.168.137.1
   pcPort: 9999
-  autoStartRecording: 1
+  autoStartRecording: 0
   autosaveInterval: 30
   enableControllerControls: 1
   enableHud: 1
@@ -321,7 +321,10 @@ MonoBehaviour:
   maxInterpolationDistance: 1.5
   startViewMode: 2
   enableControlPanel: 1
+  enableMinimap: 1
   hideControllerModels: 1
+  enableDynamicOcclusion: 1
+  occlusionOnAtStart: 0
   enableRoomMesh: 1
   roomMeshMaterialOverride: {fileID: 2100000, guid: c48b5159f98f43bd809be4c07296c804, type: 2}
   roomMeshOccluderMaterialOverride: {fileID: 2100000, guid: 18732ea9faf04a61a117359dda2b0e5d, type: 2}

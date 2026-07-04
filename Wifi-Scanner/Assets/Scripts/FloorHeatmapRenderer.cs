@@ -56,6 +56,10 @@ namespace WifiScanner
         public float floorOffset = 0.02f;
         [Range(0f, 1f)]
         public float opacity = 0.75f;
+        [Tooltip("Yaw of the heatmap grid (deg) so the raster runs parallel to " +
+                 "the walls. Set via GridCalibrator (two-controller wall " +
+                 "calibration from the panel).")]
+        public float gridYawDegrees;
 
         private GameObject _quadGo;
         private XROrigin _xrOrigin;
@@ -67,12 +71,18 @@ namespace WifiScanner
         private float[] _cellRssi;
         private int _texW, _texH;
         private float _worldCell;
-        private Vector2 _worldMin;     // XZ of texel (0,0) corner
+        // XZ of texel (0,0) corner in GRID space (world rotated by -gridYaw
+        // around Y, so the raster axes run parallel to the calibrated wall).
+        private Vector2 _worldMin;
         private float _floorY;
         private float _timer;
         private int _lastRevision = -1;
         private bool _rebuilding;
         private bool _warnedNoMaterial;
+        // Whether the floor quad should be shown (view mode). Deliberately
+        // decoupled from this component being active: the interpolation keeps
+        // running in every view mode so the minimap and PNG export stay fresh.
+        private bool _quadVisible = true;
         private int _filterMinDbm = -127;
         private int _filterMaxDbm = 0;
 
@@ -135,7 +145,10 @@ namespace WifiScanner
             // Clones of a material ASSET keep their shader variant in the
             // build (proven by the 48 point-gradient clones).
             _mat = new Material(floorMaterial);
-            _mat.SetColor(BaseColorId, Color.white);
+            // Floor opacity lives in the material tint, NOT in the texture —
+            // the texture stays fully opaque so the minimap (which shows the
+            // same texture) can fade independently.
+            _mat.SetColor(BaseColorId, new Color(1f, 1f, 1f, Mathf.Clamp01(opacity)));
             _quadRenderer.sharedMaterial = _mat;
             return true;
         }
@@ -184,11 +197,13 @@ namespace WifiScanner
             StartCoroutine(Rebuild());
         }
 
-        /// <summary>Cheap: re-colourises the cached field with the new opacity.</summary>
+        /// <summary>Floor-quad opacity only (material tint) — the texture and
+        /// therefore the minimap are unaffected.</summary>
         public void SetOpacity(float value01)
         {
             opacity = Mathf.Clamp01(value01);
-            Colorize();
+            if (_mat != null)
+                _mat.SetColor(BaseColorId, new Color(1f, 1f, 1f, opacity));
         }
 
         /// <summary>Cells outside [minDbm, maxDbm] become fully transparent.</summary>
@@ -213,16 +228,21 @@ namespace WifiScanner
             float minX = float.MaxValue, maxX = float.MinValue;
             float minZ = float.MaxValue, maxZ = float.MinValue;
             float minY = float.MaxValue;
+            // Everything below rasterises in GRID space (world rotated by
+            // -gridYaw); distances are rotation-invariant, so the IDW result
+            // is unchanged — only the raster axes align with the wall.
+            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYawDegrees, 0f);
             for (int i = 0; i < n; i++)
             {
                 var s = samples[i];
-                px[i] = s.posX;
-                pz[i] = s.posZ;
+                Vector3 g = worldToGrid * new Vector3(s.posX, 0f, s.posZ);
+                px[i] = g.x;
+                pz[i] = g.z;
                 prssi[i] = s.rssiDbm;
-                if (s.posX < minX) minX = s.posX;
-                if (s.posX > maxX) maxX = s.posX;
-                if (s.posZ < minZ) minZ = s.posZ;
-                if (s.posZ > maxZ) maxZ = s.posZ;
+                if (g.x < minX) minX = g.x;
+                if (g.x > maxX) maxX = g.x;
+                if (g.z < minZ) minZ = g.z;
+                if (g.z > maxZ) maxZ = g.z;
                 if (s.posY < minY) minY = s.posY;
             }
             minX -= padding; maxX += padding;
@@ -308,13 +328,17 @@ namespace WifiScanner
             }
             Colorize();
 
-            // --- Place the quad (texel-exact so texture and world line up) ---
+            // --- Place the quad (texel-exact so texture and world line up),
+            //     rotated back from grid space into the world ---
             float quadW = _texW * _worldCell;
             float quadH = _texH * _worldCell;
-            _quadGo.transform.position = new Vector3(
-                _worldMin.x + quadW * 0.5f, _floorY, _worldMin.y + quadH * 0.5f);
+            Quaternion gridToWorld = Quaternion.Euler(0f, gridYawDegrees, 0f);
+            Vector3 centerWorld = gridToWorld * new Vector3(
+                _worldMin.x + quadW * 0.5f, 0f, _worldMin.y + quadH * 0.5f);
+            _quadGo.transform.SetPositionAndRotation(
+                new Vector3(centerWorld.x, _floorY, centerWorld.z), gridToWorld);
             _quadGo.transform.localScale = new Vector3(quadW, 1f, quadH);
-            _quadGo.SetActive(true);
+            _quadGo.SetActive(_quadVisible);
 
             _rebuilding = false;
         }
@@ -325,7 +349,6 @@ namespace WifiScanner
         {
             if (_tex == null || _cellRssi == null || _pixels == null) return;
 
-            byte alpha = (byte)Mathf.RoundToInt(Mathf.Clamp01(opacity) * 255f);
             for (int ty = 0; ty < _texH; ty++)
             {
                 float wz = _worldMin.y + (ty + 0.5f) * _worldCell;
@@ -346,10 +369,12 @@ namespace WifiScanner
                     }
                     else
                     {
+                        // Full alpha — the floor quad fades via its material
+                        // tint, the minimap via its RawImage colour.
                         Color c = HeatmapColorMapper.Map(Mathf.RoundToInt(rssi));
                         _pixels[idx] = new Color32(
                             (byte)(c.r * 255f), (byte)(c.g * 255f),
-                            (byte)(c.b * 255f), alpha);
+                            (byte)(c.b * 255f), 255);
                     }
                 }
             }
@@ -357,7 +382,57 @@ namespace WifiScanner
             _tex.Apply(false);
         }
 
-        public void SetVisible(bool visible) => gameObject.SetActive(visible);
+        /// <summary>
+        /// Shows/hides the floor quad only — computation keeps running so the
+        /// minimap texture and PNG export stay current in every view mode.
+        /// </summary>
+        public void SetVisible(bool visible)
+        {
+            _quadVisible = visible;
+            if (_quadGo != null)
+                _quadGo.SetActive(_quadVisible && _cellRssi != null);
+        }
+
+        /// <summary>Live heatmap texture (recreated when the area grows —
+        /// consumers must re-read this reference periodically).</summary>
+        public Texture2D HeatmapTexture => _tex;
+
+        /// <summary>Georeference of the current texture (grid space — convert
+        /// world positions with <see cref="WorldToMapXZ"/>). False until the
+        /// first interpolation pass has run.</summary>
+        public bool TryGetMapInfo(out Vector2 worldMinXZ, out float cellSize,
+            out int width, out int height)
+        {
+            worldMinXZ = _worldMin;
+            cellSize = _worldCell;
+            width = _texW;
+            height = _texH;
+            return _cellRssi != null && _tex != null;
+        }
+
+        /// <summary>World position → grid-space XZ (the texture's coordinate
+        /// frame, rotated by -gridYaw so it matches TryGetMapInfo).</summary>
+        public Vector2 WorldToMapXZ(Vector3 world)
+        {
+            Vector3 g = Quaternion.Euler(0f, -gridYawDegrees, 0f) * world;
+            return new Vector2(g.x, g.z);
+        }
+
+        /// <summary>
+        /// Rotates the heatmap raster so its axes run parallel to a wall
+        /// (two-controller calibration). Normalised to (-90, 90] — the grid is
+        /// symmetric under 90° steps — and triggers a full rebuild.
+        /// </summary>
+        public void SetGridYaw(float yawDegrees)
+        {
+            float yaw = Mathf.DeltaAngle(0f, yawDegrees); // -> (-180, 180]
+            if (yaw > 90f) yaw -= 180f;
+            else if (yaw <= -90f) yaw += 180f;
+            gridYawDegrees = yaw;
+            _lastRevision = -1;          // force a rebuild
+            _timer = updateInterval;
+            Debug.Log($"[FloorHeatmap] Grid-Ausrichtung -> {yaw:F1}°");
+        }
 
         [System.Serializable]
         private class HeatmapMeta
@@ -366,6 +441,7 @@ namespace WifiScanner
             public float cellSizeMeters;
             public int width, height;
             public float floorY;
+            public float gridYawDegrees;
             public int weakDbm, strongDbm;
             public string note;
         }
@@ -382,12 +458,9 @@ namespace WifiScanner
             if (collector == null || collector.SampleCount == 0 || floorMaterial == null)
                 return;
 
-            // When the heatmap view is active the cached field is at most
-            // updateInterval old — good enough. Compute synchronously only when
-            // there is no field yet or the view is hidden (field goes stale).
-            bool stale = _cellRssi == null ||
-                (!isActiveAndEnabled && _lastRevision != collector.DataRevision);
-            if (!_rebuilding && stale)
+            // Computation now runs in every view mode, so the cached field is
+            // at most updateInterval old — only an initial pass may be missing.
+            if (!_rebuilding && _cellRssi == null)
             {
                 var pass = Rebuild();
                 while (pass.MoveNext()) { } // drain synchronously
@@ -428,11 +501,13 @@ namespace WifiScanner
                 width = _texW,
                 height = _texH,
                 floorY = _floorY,
+                gridYawDegrees = gridYawDegrees,
                 weakDbm = HeatmapColorMapper.WeakDbm,
                 strongDbm = HeatmapColorMapper.StrongDbm,
-                note = "pixel(x,y) center = world(worldMinX+(x+0.5)*cell, floorY, " +
-                       "worldMinZ+(y+0.5)*cell); PNG row 0 = worldMinZ edge; " +
-                       "grey = unmeasured; coords match wifi CSV posX/Y/Z",
+                note = "pixel(x,y) center = grid(worldMinX+(x+0.5)*cell, floorY, " +
+                       "worldMinZ+(y+0.5)*cell); world = rotate grid point by " +
+                       "+gridYawDegrees around Y; PNG row 0 = worldMinZ edge; " +
+                       "grey = unmeasured; world coords match wifi CSV posX/Y/Z",
             };
             System.IO.File.WriteAllText(
                 System.IO.Path.Combine(dir, $"{stem}_heatmap.json"),

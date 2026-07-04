@@ -33,6 +33,9 @@ namespace WifiScanner
         public RoomMeshController roomMesh;
         [Tooltip("Optional: exports the floor heatmap as PNG next to CSV/JSON.")]
         public FloorHeatmapRenderer floorHeatmap;
+        [Tooltip("Optional name prefix for exports: <name>_<Datum>_<Uhrzeit>. " +
+                 "Empty = wifi_<Datum>_<Uhrzeit>. Set via the panel's name field.")]
+        public string exportName = "";
 
         [Header("Sampling")]
         [Tooltip("Minimum distance between points (m). A new point is only created " +
@@ -240,13 +243,25 @@ namespace WifiScanner
         {
             // Compute the stem here so the room-mesh OBJ shares it with CSV/JSON
             // and the three files load up congruently on the PC.
-            string stem = fixedName ?? $"wifi_{DateTime.Now:yyyyMMdd_HHmmss}";
+            string stem = fixedName ?? $"{SanitizedExportName()}_{DateTime.Now:yyyyMMdd_HHmmss}";
             string dir = DataExporter.Export(_samples, stem);
             if (roomMesh != null)
                 roomMesh.ExportObj(stem);
             if (floorHeatmap != null)
                 floorHeatmap.ExportPng(stem);
             return dir;
+        }
+
+        // User-chosen export prefix, stripped of filesystem-hostile characters;
+        // falls back to "wifi" when empty.
+        private string SanitizedExportName()
+        {
+            string name = (exportName ?? "").Trim();
+            if (name.Length == 0) return "wifi";
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (char c in name)
+                sb.Append(char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_');
+            return sb.ToString();
         }
 
         private void RequestPermissions()

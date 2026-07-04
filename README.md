@@ -78,6 +78,8 @@ Feature-Gruppe **„Meta Quest“** aktivieren und diese Features anhaken:
 3. **Meta Quest: Boundary Visibility** (Boundaryless-Modus)
 4. **Meta Quest: Meshing** (Raum-Mesh; injiziert die `USE_SCENE`-Permission
    automatisch ins Manifest) — *in diesem Repo bereits aktiviert*
+5. **Meta Quest: Occlusion** (dynamische Tiefensensor-Occlusion) — *in diesem
+   Repo bereits aktiviert*
 
 ### Szene
 `Assets/Scenes/SampleScene.unity` ist fertig eingerichtet: XR Origin (XRI-
@@ -94,30 +96,52 @@ Inspector an `SceneBootstrap` gehängt — so bleiben die Varianten im Build.
 
 ## Bedienung
 
-Die App startet direkt mit laufender Aufnahme (Passthrough, Boundary aus).
+Die App startet in Passthrough (Boundary aus) mit **pausierter Aufnahme** —
+Aufnahme bewusst per A-Taste oder Panel starten.
 
 **Controller:**
 | Eingabe | Funktion |
 |---|---|
 | A (rechts) | Aufnahme Pause/Weiter |
-| B (rechts) | Export (CSV + JSON + OBJ) |
-| X (links) | Reset — Punktwolke leeren |
-| L-Stick ↑/↓ | Deckkraft (Punkte + Heatmap) |
+| B (rechts) | Export (CSV + JSON + OBJ + Heatmap-PNG) |
+| L-Stick ↑/↓ | Deckkraft (Punkte + Boden-Heatmap) |
+| R-Stick ↑/↓ | Deckkraft der Minimap (unabhängig) |
 | R-Stick-Klick | Ansicht wechseln: Punktwolke → Heatmap → Beides |
+| Beide Grips (nach „Grid ausrichten“) | Kalibrierlinie zwischen den Controllern; Loslassen übernimmt |
+| Y (links) | Minimap am rechten Handgelenk ein-/ausblenden |
 | Menü-Taste (links) | Bedienpanel ein-/ausblenden (erscheint vor dir) |
 
 **Bedienpanel** (mit dem Controller-Strahl anvisieren, Trigger = Klick):
-Aufnahme/Export/Löschen, Ansichtsmodus, **„Raum scannen“** (öffnet das
+Aufnahme/Export, **Löschen** (bewusst NUR hier, nicht auf einer
+Controller-Taste — zu hohes Fehlbedienungsrisiko), **Export-Name**
+(Textfeld, öffnet die System-Tastatur; Dateien heißen dann
+`<Name>_<Datum>_<Uhrzeit>.…`, leer = `wifi_…`), Ansichtsmodus, **„Raum scannen“** (öffnet das
 System-Space-Setup), Raum-Mesh-Modus **aus → Geist → verdeckt** (verdeckt =
 Occlusion: reale Wände/Möbel aus dem Raum-Scan verbergen Punkte und Heatmap
 dahinter — man sieht nur die Daten des eigenen Raums; technisch ein
 Alpha-0-Material mit ZWrite vor der Transparent-Queue, das Passthrough-Pendant
-zum „Selective Passthrough“ des Meta-SDK), Deckkraft-Slider, **RSSI-Bereichsfilter**
+zum „Selective Passthrough“ des Meta-SDK), **dynamische Occlusion an/aus**
+(Echtzeit-Tiefensensor via Depth API / `XR_META_environment_depth`: Punkte und
+Heatmap verschwinden hinter realen Objekten — auch hinter Personen und
+bewegten Möbeln, **kein Raumscan nötig**; implementiert im eigenen Shader
+`WifiScanner/OccludableUnlit`, der das globale `XR_HARD_OCCLUSION`-Keyword von
+AR Foundations `ARShaderOcclusion` auswertet), **„Grid ausrichten“**
+(Wand-Kalibrierung: Button drücken, beide Controller an die Wand halten, beide
+Grip-Tasten halten — eine Linie erscheint zwischen den Controllern —, beim
+Loslassen dreht sich das Heatmap-Raster parallel zur Wand; erneuter
+Button-Druck bricht ab), Deckkraft-Slider, **RSSI-Bereichsfilter**
 (z. B. nur Schwachstellen < −75 dBm zeigen), Farblegende und Live-Statistik
 (Min/Max/Ø-RSSI, Punktzahl, Aufnahmedauer).
 
 **Handgelenk-HUD** (linkes Handgelenk): REC-Status, Punkte, RSSI, SSID,
 Ansicht, Deckkraft, Tastenbelegung, Farblegende.
+
+**Minimap** (rechtes Handgelenk): die komplette Boden-Heatmap als nord-feste,
+maßstabsgetreue Karte (graue Zellen = noch unvermessen) mit einem Pfeilmarker
+für Position und Blickrichtung des Headsets — erleichtert die Orientierung
+beim Ablaufen und zeigt die gesamte Heatmap direkt in der Quest. Aktualisiert
+sich in jedem Ansichtsmodus alle ~2 s; wächst die vermessene Fläche, wächst
+die Karte mit. Umschalten per Y (links) oder Panel-Button.
 
 ### Gebäude + WiFi gemeinsam analysieren
 1. Pro Raum einmal **„Raum scannen“** (Space Setup) ausführen — das Scene Mesh

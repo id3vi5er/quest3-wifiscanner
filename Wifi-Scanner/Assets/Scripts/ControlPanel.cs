@@ -30,6 +30,9 @@ namespace WifiScanner
         public FloorHeatmapRenderer floor;
         public VisualizationModeController modeController;
         public RoomMeshController roomMesh;
+        public DynamicOcclusionController occlusion;
+        public MinimapController minimap;
+        public GridCalibrator gridCalibrator;
 
         [Header("Placement")]
         [Tooltip("Distance in front of the user when (re)summoned (m).")]
@@ -47,6 +50,9 @@ namespace WifiScanner
         private TextMeshProUGUI _recLabel;
         private TextMeshProUGUI _modeLabel;
         private TextMeshProUGUI _meshLabel;
+        private TextMeshProUGUI _occlusionLabel;
+        private TextMeshProUGUI _minimapLabel;
+        private TextMeshProUGUI _gridLabel;
         private TextMeshProUGUI _filterLabel;
         private int _filterMin = FilterRangeMin;
         private int _filterMax = FilterRangeMax;
@@ -123,9 +129,26 @@ namespace WifiScanner
         private void OnMeshToggleClicked()
         {
             if (roomMesh == null) return;
-            roomMesh.CycleMode(); // aus -> Geist -> verdeckt (Occlusion)
+            roomMesh.CycleMode(); // aus -> Geist -> verdeckt (statischer Occluder)
             _meshLabel.text = $"Mesh: {roomMesh.ModeLabel}";
         }
+
+        private void OnOcclusionClicked()
+        {
+            if (occlusion == null) return;
+            occlusion.ToggleOcclusion(); // dynamische Tiefensensor-Occlusion
+            _occlusionLabel.text = occlusion.OcclusionEnabled
+                ? "Occlusion: an" : "Occlusion: aus";
+        }
+
+        private void OnMinimapClicked()
+        {
+            if (minimap == null) return;
+            minimap.Toggle();
+            _minimapLabel.text = minimap.IsVisible ? "Minimap: an" : "Minimap: aus";
+        }
+
+        private void OnGridCalibrateClicked() => gridCalibrator?.ToggleArmed();
 
         private void OnOpacityChanged(float value01)
         {
@@ -181,6 +204,17 @@ namespace WifiScanner
                 _recLabel.text = collector.IsRecording ? "❚❚ Pause" : "● Aufnahme";
             if (_meshLabel != null && roomMesh != null)
                 _meshLabel.text = $"Mesh: {roomMesh.ModeLabel}";
+            if (_occlusionLabel != null && occlusion != null)
+                _occlusionLabel.text = occlusion.OcclusionEnabled
+                    ? "Occlusion: an" : "Occlusion: aus";
+            if (_minimapLabel != null && minimap != null)
+                _minimapLabel.text = minimap.IsVisible ? "Minimap: an" : "Minimap: aus";
+            if (_gridLabel != null && gridCalibrator != null)
+                _gridLabel.text = gridCalibrator.IsArmed
+                    ? "An Wand halten, beide Grips drücken, loslassen"
+                    : (floor != null && Mathf.Abs(floor.gridYawDegrees) > 0.05f
+                        ? $"Grid ausrichten ({floor.gridYawDegrees:F0}°)"
+                        : "Grid ausrichten");
         }
 
         private void PlaceInFrontOfUser()
@@ -225,8 +259,8 @@ namespace WifiScanner
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             var rootRt = (RectTransform)_root.transform;
-            rootRt.sizeDelta = new Vector2(480f, 640f);
-            _root.transform.localScale = Vector3.one * 0.001f; // 0.48 x 0.64 m
+            rootRt.sizeDelta = new Vector2(480f, 860f);
+            _root.transform.localScale = Vector3.one * 0.001f; // 0.48 x 0.86 m
             _root.AddComponent<GraphicRaycaster>();            // editor mouse
             _root.AddComponent<TrackedDeviceGraphicRaycaster>(); // XR rays
 
@@ -253,6 +287,10 @@ namespace WifiScanner
 
             AddLegend(content.transform);
 
+            AddText(content.transform, "Export-Name (optional):", 20f,
+                FontStyles.Normal, TextAlignmentOptions.Left);
+            AddNameField(content.transform);
+
             _recLabel = AddButtonRow(content.transform,
                 ("❚❚ Pause", OnRecordClicked),
                 ("Export", OnExportClicked))[0];
@@ -262,6 +300,13 @@ namespace WifiScanner
             _meshLabel = AddButtonRow(content.transform,
                 ("Raum scannen", OnScanClicked),
                 ("Mesh: aus", OnMeshToggleClicked))[1];
+            var toggleLabels = AddButtonRow(content.transform,
+                ("Occlusion: aus", OnOcclusionClicked),
+                ("Minimap: an", OnMinimapClicked));
+            _occlusionLabel = toggleLabels[0];
+            _minimapLabel = toggleLabels[1];
+            _gridLabel = AddButtonRow(content.transform,
+                ("Grid ausrichten", OnGridCalibrateClicked))[0];
 
             float startOpacity = cloud != null ? cloud.opacity : 0.6f;
             AddSliderRow(content.transform, "Deckkraft", 0f, 1f, startOpacity,
@@ -311,6 +356,49 @@ namespace WifiScanner
                 FontStyles.Normal, TextAlignmentOptions.Center);
             AddText(labels.transform, $"{HeatmapColorMapper.StrongDbm} dBm", 18f,
                 FontStyles.Normal, TextAlignmentOptions.Right);
+        }
+
+        /// <summary>
+        /// Text field for the optional export name (files become
+        /// name_Datum_Uhrzeit). Clicking it with the ray opens the Quest's
+        /// system keyboard (TMP_InputField + TouchScreenKeyboard).
+        /// </summary>
+        private void AddNameField(Transform parent)
+        {
+            var go = new GameObject("ExportNameField", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>().preferredHeight = 48f;
+            var bg = go.AddComponent<Image>();
+            bg.color = new Color(0.12f, 0.13f, 0.18f, 1f);
+            var field = go.AddComponent<TMP_InputField>();
+            field.targetGraphic = bg;
+
+            var viewportGo = new GameObject("Text Area", typeof(RectTransform));
+            viewportGo.transform.SetParent(go.transform, false);
+            viewportGo.AddComponent<RectMask2D>();
+            var viewport = (RectTransform)viewportGo.transform;
+            Stretch(viewport);
+            viewport.offsetMin = new Vector2(12f, 6f);
+            viewport.offsetMax = new Vector2(-12f, -7f);
+
+            var placeholder = AddText(viewportGo.transform, "wifi", 22f,
+                FontStyles.Italic, TextAlignmentOptions.MidlineLeft);
+            placeholder.color = new Color(1f, 1f, 1f, 0.35f);
+            Stretch(placeholder.rectTransform);
+
+            var text = AddText(viewportGo.transform, "", 22f,
+                FontStyles.Normal, TextAlignmentOptions.MidlineLeft);
+            Stretch(text.rectTransform);
+
+            field.textViewport = viewport;
+            field.textComponent = text;
+            field.placeholder = placeholder;
+            field.characterLimit = 40;
+            if (collector != null) field.SetTextWithoutNotify(collector.exportName);
+            field.onValueChanged.AddListener(value =>
+            {
+                if (collector != null) collector.exportName = value;
+            });
         }
 
         /// <summary>Adds a row of equally sized buttons; returns their labels.</summary>

@@ -27,8 +27,9 @@ namespace WifiScanner
         [Header("Wrist panel placement (relative to the left controller)")]
         [Tooltip("Offset of the panel from the controller origin, in metres.")]
         public Vector3 panelLocalPosition = new Vector3(0f, 0.04f, -0.06f);
-        [Tooltip("Tilt of the panel so it faces you when you raise your wrist.")]
-        public Vector3 panelLocalEuler = new Vector3(60f, 0f, 0f);
+        [Tooltip("Tilt of the panel. 90 = lying flat on top of the controller " +
+                 "(face up); smaller values tilt it towards you.")]
+        public Vector3 panelLocalEuler = new Vector3(90f, 0f, 0f);
         [Tooltip("Metres per canvas unit (panel size = sizeDelta * this).")]
         public float panelScale = 0.0004f;
 
@@ -38,9 +39,10 @@ namespace WifiScanner
             "──  Tasten  ──\n" +
             "A   Aufnahme  Pause/Weiter\n" +
             "B   Export\n" +
-            "X   Reset (linke Hand)\n" +
             "L-Stick ↑/↓   Sichtbarkeit\n" +
+            "R-Stick ↑/↓   Minimap-Deckkraft\n" +
             "R-Stick-Klick   Ansicht\n" +
+            "Y (links)   Minimap\n" +
             "Menü (links)   Panel";
 
         private TextMeshProUGUI _text;

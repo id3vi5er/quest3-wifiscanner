@@ -25,7 +25,9 @@ namespace WifiScanner
         public int pcPort = 9999;
 
         [Header("Recording")]
-        public bool autoStartRecording = true;
+        [Tooltip("Off by default: recording is started deliberately (A button " +
+                 "or panel), not by app launch.")]
+        public bool autoStartRecording = false;
         [Tooltip("Seconds between autosaves to wifi_autosave (0 = disabled).")]
         public float autosaveInterval = 30f;
         [Tooltip("A = pause/resume recording, B = export (right controller).")]
@@ -76,9 +78,22 @@ namespace WifiScanner
                  "the left controller's menu button.")]
         public bool enableControlPanel = true;
 
+        [Header("Minimap")]
+        [Tooltip("North-up heatmap minimap on the right wrist with a headset " +
+                 "position/direction marker. Toggle: left Y button or panel.")]
+        public bool enableMinimap = true;
+
         [Header("Controllers")]
         [Tooltip("Hide the rendered controller models; rays, menus and HUD stay.")]
         public bool hideControllerModels = true;
+
+        [Header("Dynamic occlusion (environment depth)")]
+        [Tooltip("Real-time depth occlusion: points/heatmap disappear behind " +
+                 "real objects, no room scan needed. Needs the OpenXR feature " +
+                 "'Meta Quest: Occlusion'. Toggled via the panel.")]
+        public bool enableDynamicOcclusion = true;
+        [Tooltip("Start with dynamic occlusion already on.")]
+        public bool occlusionOnAtStart = false;
 
         [Header("Room mesh (3D reconstruction)")]
         [Tooltip("Scene-mesh room reconstruction: ghost overlay + OBJ export. " +
@@ -165,6 +180,31 @@ namespace WifiScanner
                                      "stays invisible.");
             }
 
+            // --- Grid calibration (two controllers against a wall) ---
+            GridCalibrator gridCal = null;
+            if (floor != null)
+            {
+                gridCal = gameObject.AddComponent<GridCalibrator>();
+                gridCal.floor = floor;
+                gridCal.lineMaterial = pointMaterialOverride;
+            }
+
+            // --- Minimap on the right wrist (needs the floor heatmap as source) ---
+            MinimapController minimap = null;
+            if (enableMinimap && floor != null)
+            {
+                minimap = gameObject.AddComponent<MinimapController>();
+                minimap.floor = floor;
+            }
+
+            // --- Dynamic occlusion via real-time environment depth ---
+            DynamicOcclusionController occlusion = null;
+            if (enableDynamicOcclusion)
+            {
+                occlusion = gameObject.AddComponent<DynamicOcclusionController>();
+                occlusion.occlusionOnAtStart = occlusionOnAtStart;
+            }
+
             // --- Hide controller models (rays/menus stay usable) ---
             if (hideControllerModels)
                 gameObject.AddComponent<ControllerModelHider>();
@@ -199,6 +239,9 @@ namespace WifiScanner
                 panel.floor = floor;
                 panel.modeController = vizMode;
                 panel.roomMesh = roomMesh;
+                panel.occlusion = occlusion;
+                panel.minimap = minimap;
+                panel.gridCalibrator = gridCal;
             }
 
             Debug.Log("[SceneBootstrap] WiFi scanner initialised " +
