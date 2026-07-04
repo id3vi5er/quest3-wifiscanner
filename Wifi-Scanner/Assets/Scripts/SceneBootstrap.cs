@@ -92,6 +92,9 @@ namespace WifiScanner
         [Tooltip("North-up heatmap minimap on the right wrist with a headset " +
                  "position/direction marker. Toggle: left Y button or panel.")]
         public bool enableMinimap = true;
+        [Tooltip("Draw the traced room outlines (floor plan) over the minimap. " +
+                 "Also toggleable at runtime via the panel.")]
+        public bool minimapShowFloorPlan = true;
 
         [Header("Controllers")]
         [Tooltip("Hide the rendered controller models; rays, menus and HUD stay.")]
@@ -217,6 +220,8 @@ namespace WifiScanner
             {
                 minimap = gameObject.AddComponent<MinimapController>();
                 minimap.floor = floor;
+                minimap.roomTracer = roomTracer;
+                minimap.showFloorPlan = minimapShowFloorPlan;
             }
 
             // --- Dynamic occlusion via real-time environment depth ---

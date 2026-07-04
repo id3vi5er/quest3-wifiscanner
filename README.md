@@ -145,10 +145,14 @@ startet den Modus — ein Punkt schwebt vor dem rechten Controller (Distanz im
 Linien gezeichnet. Schließen: B-Taste (letzte→erste Ecke) oder **Einrasten** —
 nahe der ersten Ecke rastet der Cursor ein und wird grün, Trigger schließt.
 A = letzte Ecke zurück. Mehrere Räume nacheinander möglich; die Grundrisse
-bleiben sichtbar. Export bei jedem Daten-Export: `<stem>_rooms.svg`
-(**maßstabsgetreu, 1 Unit = 1 mm**, Wandlängen in Metern beschriftet, nach
-Grid-Kalibrierung achsparallel) + `<stem>_rooms.json` (Roh-Ecken, Basis für
-einen späteren 3D-Export).
+bleiben sichtbar. Export bei jedem Daten-Export: `<stem>_rooms.svg` — ein
+**Gesamtgrundriss**: alle Räume in EINER Datei mit gemeinsamem
+Koordinatensystem, also lagerichtig zueinander (**maßstabsgetreu, 1 Unit =
+1 mm**, Wandlängen in Metern beschriftet, nach Grid-Kalibrierung
+achsparallel) + `<stem>_rooms.json` (Roh-Ecken, Basis für einen späteren
+3D-Export). Der Grundriss wird zusätzlich als weißes Linien-Overlay in der
+**Minimap** angezeigt — abschaltbar per Panel-Button „Grundriss (Minimap)“
+oder `SceneBootstrap.minimapShowFloorPlan`.
 
 **Minimap** (rechtes Handgelenk): die komplette Boden-Heatmap als nord-feste,
 maßstabsgetreue Karte (graue Zellen = noch unvermessen) mit einem Pfeilmarker

@@ -24,8 +24,10 @@ namespace WifiScanner
     /// </summary>
     public class MinimapController : MonoBehaviour
     {
-        [Header("Data source")]
+        [Header("Data sources")]
         public FloorHeatmapRenderer floor;
+        [Tooltip("Optional: traced room outlines drawn over the map.")]
+        public RoomTracer roomTracer;
 
         [Header("Wrist panel placement (relative to the right controller)")]
         public Vector3 panelLocalPosition = new Vector3(0f, 0.04f, -0.06f);
@@ -40,6 +42,12 @@ namespace WifiScanner
         public float refreshInterval = 0.5f;
         public bool visibleAtStart = true;
 
+        [Header("Floor plan overlay")]
+        [Tooltip("Draw the traced room outlines (RoomTracer) over the map.")]
+        public bool showFloorPlan = true;
+        [Tooltip("Pixel resolution of the outline overlay texture.")]
+        public int floorPlanResolution = 256;
+
         [Header("Opacity (independent of the floor/point opacity)")]
         [Range(0f, 1f)]
         [Tooltip("Adjusted in-headset with the RIGHT thumbstick up/down.")]
@@ -51,6 +59,9 @@ namespace WifiScanner
 
         private GameObject _canvasGo;
         private RawImage _map;
+        private RawImage _floorPlan;
+        private Texture2D _floorPlanTex;
+        private Color32[] _floorPlanPixels;
         private RectTransform _marker;
         private TextMeshProUGUI _placeholder;
         private InputAction _toggleAction;
@@ -116,6 +127,24 @@ namespace WifiScanner
             mapRt.sizeDelta = new Vector2(maxMapUnits, maxMapUnits);
             _map.color = new Color(1f, 1f, 1f, mapOpacity);
             _map.enabled = false;
+
+            // Room-outline overlay, stretched over the map so its pixels map
+            // 1:1 onto the map's georeference.
+            var planGo = new GameObject("FloorPlan", typeof(RectTransform));
+            planGo.transform.SetParent(mapGo.transform, false);
+            _floorPlan = planGo.AddComponent<RawImage>();
+            _floorPlan.raycastTarget = false;
+            Stretch(_floorPlan.rectTransform);
+            floorPlanResolution = Mathf.Clamp(floorPlanResolution, 64, 1024);
+            _floorPlanTex = new Texture2D(floorPlanResolution, floorPlanResolution,
+                TextureFormat.RGBA32, false)
+            {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+            };
+            _floorPlanPixels = new Color32[floorPlanResolution * floorPlanResolution];
+            _floorPlan.texture = _floorPlanTex;
+            _floorPlan.enabled = false;
 
             _placeholder = new GameObject("Placeholder", typeof(RectTransform))
                 .AddComponent<TextMeshProUGUI>();
@@ -200,7 +229,8 @@ namespace WifiScanner
         // the image aspect equal to the mapped world area's aspect.
         private void RefreshMap()
         {
-            _hasMap = floor.TryGetMapInfo(out _, out float cell, out int w, out int h);
+            _hasMap = floor.TryGetMapInfo(out Vector2 worldMin, out float cell,
+                out int w, out int h);
             _map.enabled = _hasMap;
             _placeholder.gameObject.SetActive(!_hasMap);
             _marker.gameObject.SetActive(_hasMap);
@@ -213,6 +243,78 @@ namespace WifiScanner
             float worldH = h * cell;
             float scale = maxMapUnits / Mathf.Max(worldW, worldH);
             _map.rectTransform.sizeDelta = new Vector2(worldW * scale, worldH * scale);
+
+            RedrawFloorPlan(worldMin, cell, w, h);
+        }
+
+        /// <summary>Show/hide the traced-rooms overlay on the map.</summary>
+        public void SetFloorPlanVisible(bool visible)
+        {
+            showFloorPlan = visible;
+            _refreshTimer = 0f; // apply on the next Update
+        }
+
+        public void ToggleFloorPlan() => SetFloorPlanVisible(!showFloorPlan);
+
+        // Rasterises the traced room outlines into the overlay texture using
+        // the same georeference as the heatmap texture underneath.
+        private void RedrawFloorPlan(Vector2 worldMin, float cell, int w, int h)
+        {
+            bool show = showFloorPlan && roomTracer != null &&
+                        roomTracer.Rooms.Count > 0;
+            _floorPlan.enabled = show;
+            if (!show) return;
+
+            var clear = new Color32(0, 0, 0, 0);
+            for (int i = 0; i < _floorPlanPixels.Length; i++)
+                _floorPlanPixels[i] = clear;
+
+            var lineColor = new Color32(255, 255, 255, 235);
+            int res = floorPlanResolution;
+            float mapW = w * cell;
+            float mapH = h * cell;
+
+            foreach (var room in roomTracer.Rooms)
+            {
+                int n = room.cornersXZ.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    Vector2 pa = WorldToOverlayPx(room.cornersXZ[i], worldMin, mapW, mapH, res);
+                    Vector2 pb = WorldToOverlayPx(room.cornersXZ[(i + 1) % n], worldMin, mapW, mapH, res);
+                    PlotLine(pa, pb, lineColor, res);
+                }
+            }
+
+            _floorPlanTex.SetPixels32(_floorPlanPixels);
+            _floorPlanTex.Apply(false);
+        }
+
+        private Vector2 WorldToOverlayPx(Vector2 worldXZ, Vector2 worldMin,
+            float mapW, float mapH, int res)
+        {
+            // Same grid-space conversion as the heatmap/marker.
+            Vector2 g = floor.WorldToMapXZ(new Vector3(worldXZ.x, 0f, worldXZ.y));
+            float u = (g.x - worldMin.x) / mapW;
+            float v = (g.y - worldMin.y) / mapH;
+            return new Vector2(u * (res - 1), v * (res - 1));
+        }
+
+        // Samples along the segment; pixels outside the map area are skipped
+        // (rooms may extend beyond the recorded heatmap bounds).
+        private void PlotLine(Vector2 a, Vector2 b, Color32 color, int res)
+        {
+            int steps = Mathf.Max(1, Mathf.CeilToInt(Vector2.Distance(a, b) * 2f));
+            for (int s = 0; s <= steps; s++)
+            {
+                Vector2 p = Vector2.Lerp(a, b, s / (float)steps);
+                int x = Mathf.RoundToInt(p.x);
+                int y = Mathf.RoundToInt(p.y);
+                if (x < 0 || x >= res || y < 0 || y >= res) continue;
+                _floorPlanPixels[y * res + x] = color;
+                // Thicken to ~2 px for readability.
+                if (x + 1 < res) _floorPlanPixels[y * res + x + 1] = color;
+                if (y + 1 < res) _floorPlanPixels[(y + 1) * res + x] = color;
+            }
         }
 
         private void UpdateMarker()

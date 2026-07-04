@@ -468,11 +468,12 @@ namespace WifiScanner
         /// the image congruently under the CSV/OBJ data. If the cached field is
         /// stale or missing (e.g. point-cloud-only view mode), the interpolation
         /// runs synchronously first — acceptable for a deliberate export.
+        /// Returns the PNG bytes (reused for the combined SVG), or null.
         /// </summary>
-        public void ExportPng(string stem)
+        public byte[] ExportPng(string stem)
         {
             if (collector == null || collector.SampleCount == 0 || floorMaterial == null)
-                return;
+                return null;
 
             // Computation now runs in every view mode, so the cached field is
             // at most updateInterval old — only an initial pass may be missing.
@@ -481,7 +482,7 @@ namespace WifiScanner
                 var pass = Rebuild();
                 while (pass.MoveNext()) { } // drain synchronously
             }
-            if (_cellRssi == null) return;
+            if (_cellRssi == null) return null;
 
             var pixels = new Color32[_texW * _texH];
             for (int i = 0; i < _cellRssi.Length; i++)
@@ -530,6 +531,7 @@ namespace WifiScanner
                 JsonUtility.ToJson(meta, true));
 
             Debug.Log($"[FloorHeatmap] Wrote heatmap PNG to {pngPath}");
+            return png;
         }
 
         private static long HashKey(int x, int z) => ((long)x << 32) ^ (uint)z;

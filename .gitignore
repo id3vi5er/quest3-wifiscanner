@@ -34,3 +34,4 @@ tools/wifi_live.csv
 # Python
 __pycache__/
 *.pyc
+tools/scans/

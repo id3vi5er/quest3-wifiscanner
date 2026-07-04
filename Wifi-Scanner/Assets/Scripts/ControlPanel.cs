@@ -55,6 +55,7 @@ namespace WifiScanner
         private TextMeshProUGUI _minimapLabel;
         private TextMeshProUGUI _gridLabel;
         private TextMeshProUGUI _roomLabel;
+        private TextMeshProUGUI _floorPlanLabel;
         private TextMeshProUGUI _filterLabel;
         private int _filterMin = FilterRangeMin;
         private int _filterMax = FilterRangeMax;
@@ -154,6 +155,8 @@ namespace WifiScanner
 
         private void OnRoomTraceClicked() => roomTracer?.ToggleActive();
 
+        private void OnFloorPlanClicked() => minimap?.ToggleFloorPlan();
+
         private void OnOpacityChanged(float value01)
         {
             cloud?.SetOpacity(value01);
@@ -229,6 +232,9 @@ namespace WifiScanner
                 _roomLabel.text = roomTracer.IsActive
                     ? "Zeichnen beenden"
                     : $"Raum zeichnen ({roomTracer.Rooms.Count})";
+            if (_floorPlanLabel != null && minimap != null)
+                _floorPlanLabel.text = minimap.showFloorPlan
+                    ? "Grundriss (Minimap): an" : "Grundriss (Minimap): aus";
         }
 
         private void PlaceInFrontOfUser()
@@ -273,8 +279,8 @@ namespace WifiScanner
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             var rootRt = (RectTransform)_root.transform;
-            rootRt.sizeDelta = new Vector2(480f, 860f);
-            _root.transform.localScale = Vector3.one * 0.001f; // 0.48 x 0.86 m
+            rootRt.sizeDelta = new Vector2(480f, 930f);
+            _root.transform.localScale = Vector3.one * 0.001f; // 0.48 x 0.93 m
             _root.AddComponent<GraphicRaycaster>();            // editor mouse
             _root.AddComponent<TrackedDeviceGraphicRaycaster>(); // XR rays
 
@@ -324,6 +330,8 @@ namespace WifiScanner
                 ("Raum zeichnen", OnRoomTraceClicked));
             _gridLabel = traceLabels[0];
             _roomLabel = traceLabels[1];
+            _floorPlanLabel = AddButtonRow(content.transform,
+                ("Grundriss (Minimap): an", OnFloorPlanClicked))[0];
 
             float startOpacity = cloud != null ? cloud.opacity : 0.6f;
             AddSliderRow(content.transform, "Deckkraft", 0f, 1f, startOpacity,

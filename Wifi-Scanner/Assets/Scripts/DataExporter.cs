@@ -114,31 +114,13 @@ namespace WifiScanner
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             string dir = Application.persistentDataPath;
 
-            // World XZ -> grid space (mm), SVG y axis points down => flip Z.
-            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYawDegrees, 0f);
-            var roomsMm = new List<List<Vector2>>();
-            float minX = float.MaxValue, minY = float.MaxValue;
-            float maxX = float.MinValue, maxY = float.MinValue;
-            foreach (var room in rooms)
-            {
-                var pts = new List<Vector2>(room.cornersXZ.Count);
-                foreach (var c in room.cornersXZ)
-                {
-                    Vector3 g = worldToGrid * new Vector3(c.x, 0f, c.y);
-                    var p = new Vector2(g.x * 1000f, -g.z * 1000f);
-                    pts.Add(p);
-                    if (p.x < minX) minX = p.x;
-                    if (p.x > maxX) maxX = p.x;
-                    if (p.y < minY) minY = p.y;
-                    if (p.y > maxY) maxY = p.y;
-                }
-                roomsMm.Add(pts);
-            }
+            var roomsMm = RoomsToGridMm(rooms, gridYawDegrees,
+                out Vector2 min, out Vector2 max);
 
             const float margin = 250f; // mm
-            float w = maxX - minX + 2f * margin;
-            float h = maxY - minY + 2f * margin;
-            Vector2 offset = new Vector2(margin - minX, margin - minY);
+            float w = max.x - min.x + 2f * margin;
+            float h = max.y - min.y + 2f * margin;
+            Vector2 offset = new Vector2(margin - min.x, margin - min.y);
 
             var sb = new StringBuilder();
             sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
@@ -149,7 +131,117 @@ namespace WifiScanner
                 "  <!-- Quest3 WiFi-Scanner Grundriss | {0:yyyy-MM-dd HH:mm} | " +
                 "1 unit = 1 mm | gridYaw {1:F1} deg | {2} Raum/Räume -->",
                 DateTime.Now, gridYawDegrees, rooms.Count));
+            AppendRoomShapes(sb, roomsMm, offset, haloText: false);
+            sb.AppendLine("</svg>");
 
+            string svgPath = Path.Combine(dir, $"{stem}_rooms.svg");
+            File.WriteAllText(svgPath, sb.ToString());
+
+            var wrapper = new RoomList
+            {
+                gridYawDegrees = gridYawDegrees,
+                rooms = new List<RoomOutline>(rooms),
+            };
+            File.WriteAllText(Path.Combine(dir, $"{stem}_rooms.json"),
+                JsonUtility.ToJson(wrapper, true));
+
+            Debug.Log($"[DataExporter] Wrote {rooms.Count} room outline(s) to {svgPath}");
+            return svgPath;
+        }
+
+        /// <summary>
+        /// Combined view: the heatmap PNG as background image and the traced
+        /// floor plan drawn on top — one real-scale SVG (1 unit = 1 mm), both
+        /// layers in the shared grid-space coordinate system so they are
+        /// congruent. Bounds are the union of heatmap and rooms.
+        /// </summary>
+        public static string ExportCombinedSvg(byte[] heatmapPng,
+            Vector2 gridMinXZ, float cellSize, int texW, int texH,
+            float gridYawDegrees, IReadOnlyList<RoomOutline> rooms, string stem)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+
+            var roomsMm = RoomsToGridMm(rooms, gridYawDegrees,
+                out Vector2 min, out Vector2 max);
+
+            // Heatmap image rect in the same mm frame. PNG row 0 (visual top
+            // after encoding) is the max-Z edge, matching SVG's y-down axis.
+            float imgX = gridMinXZ.x * 1000f;
+            float imgW = texW * cellSize * 1000f;
+            float imgH = texH * cellSize * 1000f;
+            float imgY = -(gridMinXZ.y + texH * cellSize) * 1000f;
+            min = Vector2.Min(min, new Vector2(imgX, imgY));
+            max = Vector2.Max(max, new Vector2(imgX + imgW, imgY + imgH));
+
+            const float margin = 250f; // mm
+            float w = max.x - min.x + 2f * margin;
+            float h = max.y - min.y + 2f * margin;
+            Vector2 offset = new Vector2(margin - min.x, margin - min.y);
+
+            var sb = new StringBuilder();
+            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            sb.AppendLine(string.Format(inv,
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" " +
+                "xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{0:F0}mm\" " +
+                "height=\"{1:F0}mm\" viewBox=\"0 0 {0:F0} {1:F0}\">", w, h));
+            sb.AppendLine(string.Format(inv,
+                "  <!-- Quest3 WiFi-Scanner kombinierte Ansicht (Heatmap + " +
+                "Grundriss) | {0:yyyy-MM-dd HH:mm} | 1 unit = 1 mm | gridYaw " +
+                "{1:F1} deg -->", DateTime.Now, gridYawDegrees));
+
+            string b64 = Convert.ToBase64String(heatmapPng);
+            sb.Append(string.Format(inv,
+                "  <image x=\"{0:F0}\" y=\"{1:F0}\" width=\"{2:F0}\" " +
+                "height=\"{3:F0}\" preserveAspectRatio=\"none\" ",
+                imgX + offset.x, imgY + offset.y, imgW, imgH));
+            sb.Append("xlink:href=\"data:image/png;base64,").Append(b64)
+              .AppendLine("\"/>");
+
+            AppendRoomShapes(sb, roomsMm, offset, haloText: true);
+            sb.AppendLine("</svg>");
+
+            string path = Path.Combine(Application.persistentDataPath,
+                $"{stem}_combined.svg");
+            File.WriteAllText(path, sb.ToString());
+            Debug.Log($"[DataExporter] Wrote combined heatmap+floor-plan SVG to {path}");
+            return path;
+        }
+
+        // World-XZ corners -> grid space (rotated by -gridYaw) in mm, SVG
+        // y-down (Z flipped); also returns the bounds over all rooms.
+        private static List<List<Vector2>> RoomsToGridMm(
+            IReadOnlyList<RoomOutline> rooms, float gridYawDegrees,
+            out Vector2 min, out Vector2 max)
+        {
+            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYawDegrees, 0f);
+            var roomsMm = new List<List<Vector2>>();
+            min = new Vector2(float.MaxValue, float.MaxValue);
+            max = new Vector2(float.MinValue, float.MinValue);
+            foreach (var room in rooms)
+            {
+                var pts = new List<Vector2>(room.cornersXZ.Count);
+                foreach (var c in room.cornersXZ)
+                {
+                    Vector3 g = worldToGrid * new Vector3(c.x, 0f, c.y);
+                    var p = new Vector2(g.x * 1000f, -g.z * 1000f);
+                    pts.Add(p);
+                    min = Vector2.Min(min, p);
+                    max = Vector2.Max(max, p);
+                }
+                roomsMm.Add(pts);
+            }
+            return roomsMm;
+        }
+
+        // Polygons + wall-length labels. haloText draws a white halo around
+        // the labels so they stay readable on the coloured heatmap background.
+        private static void AppendRoomShapes(StringBuilder sb,
+            List<List<Vector2>> roomsMm, Vector2 offset, bool haloText)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string textExtra = haloText
+                ? " stroke=\"#ffffff\" stroke-width=\"30\" paint-order=\"stroke\""
+                : "";
             foreach (var pts in roomsMm)
             {
                 sb.Append("  <polygon fill=\"#4488cc\" fill-opacity=\"0.06\" " +
@@ -172,25 +264,10 @@ namespace WifiScanner
                     float meters = Vector2.Distance(a, b) / 1000f;
                     sb.AppendLine(string.Format(inv,
                         "  <text x=\"{0:F0}\" y=\"{1:F0}\" font-size=\"120\" " +
-                        "fill=\"#333333\" text-anchor=\"middle\">{2:F2} m</text>",
-                        mid.x, mid.y, meters));
+                        "fill=\"#333333\" text-anchor=\"middle\"{2}>{3:F2} m</text>",
+                        mid.x, mid.y, textExtra, meters));
                 }
             }
-            sb.AppendLine("</svg>");
-
-            string svgPath = Path.Combine(dir, $"{stem}_rooms.svg");
-            File.WriteAllText(svgPath, sb.ToString());
-
-            var wrapper = new RoomList
-            {
-                gridYawDegrees = gridYawDegrees,
-                rooms = new List<RoomOutline>(rooms),
-            };
-            File.WriteAllText(Path.Combine(dir, $"{stem}_rooms.json"),
-                JsonUtility.ToJson(wrapper, true));
-
-            Debug.Log($"[DataExporter] Wrote {rooms.Count} room outline(s) to {svgPath}");
-            return svgPath;
         }
     }
 }

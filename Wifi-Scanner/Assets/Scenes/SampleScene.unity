@@ -319,8 +319,11 @@ MonoBehaviour:
   floorMaterialOverride: {fileID: 2100000, guid: 25800bb061094a6295cd4da51bbe3a13, type: 2}
   heatmapCellSize: 0.1
   maxInterpolationDistance: 1.5
-  startViewMode: 2
+  startViewMode: 1
   enableControlPanel: 1
+  enableRoomTracer: 1
+  roomCursorDistance: 0.1
+  roomSnapRadius: 0.3
   enableMinimap: 1
   hideControllerModels: 1
   enableDynamicOcclusion: 1
