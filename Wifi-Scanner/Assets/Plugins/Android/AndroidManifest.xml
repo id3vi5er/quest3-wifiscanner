@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Nur Permissions. Aktivität, VR-Kategorie, Headtracking- und
+         Passthrough-Features werden vom OpenXR/Meta-OpenXR-Stack beim Build
+         automatisch in das generierte Manifest gemerged. -->
+
+    <!-- WiFi-Status + RSSI des verbundenen AP -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Auf Android 13+ nötig, damit SSID/BSSID/RSSI nicht redaktiert werden -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+
+    <!-- Live-Stream an den PC im lokalen Netz -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!-- Hauptaktivität fuer den GameActivity-Einstiegspunkt
+             (androidApplicationEntry=2). Muss hier benannt deklariert sein,
+             damit der Meta-OpenXR-Stack die VR-Kategorie hierauf mergen kann
+             und keine namenlose Waisen-Activity entsteht.
+             Bei Umstellung auf Application Entry = "Activity":
+             name="com.unity3d.player.UnityPlayerActivity",
+             theme="@style/UnityThemeSelector", die lib_name-meta-data entfernen. -->
+        <activity android:name="com.unity3d.player.UnityPlayerGameActivity"
+                  android:theme="@style/BaseUnityGameActivityTheme"
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.oculus.intent.category.VR" />
+            </intent-filter>
+            <meta-data android:name="unityplayer.UnityActivity" android:value="true" />
+            <meta-data android:name="android.app.lib_name" android:value="game" />
+        </activity>
+    </application>
+
+</manifest>

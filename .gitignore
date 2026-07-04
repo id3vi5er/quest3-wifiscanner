@@ -1,0 +1,36 @@
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Build artifacts
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# IDE
+.vs/
+.idea/
+*.csproj
+*.sln
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Captured data / live logs
+wifi_*.csv
+wifi_*.json
+tools/wifi_live.csv
+
+# Python
+__pycache__/
+*.pyc
