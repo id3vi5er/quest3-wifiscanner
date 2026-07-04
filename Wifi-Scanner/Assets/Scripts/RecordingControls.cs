@@ -19,6 +19,9 @@ namespace WifiScanner
     public class RecordingControls : MonoBehaviour
     {
         public SampleCollector collector;
+        [Tooltip("While the room tracer is active, A/B belong to it (undo/" +
+                 "finish) — recording controls are suspended.")]
+        public RoomTracer tracer;
 
         [Tooltip("Hand for A=toggle / B=export.")]
         public bool useRightHand = true;
@@ -51,6 +54,7 @@ namespace WifiScanner
         private void Update()
         {
             if (collector == null) return;
+            if (tracer != null && tracer.IsActive) return; // A/B belong to the tracer
 
             if (_toggleAction.WasPressedThisFrame())
             {

@@ -108,6 +108,7 @@ Aufnahme bewusst per A-Taste oder Panel starten.
 | R-Stick ↑/↓ | Deckkraft der Minimap (unabhängig) |
 | R-Stick-Klick | Ansicht wechseln: Punktwolke → Heatmap → Beides |
 | Beide Grips (nach „Grid ausrichten“) | Kalibrierlinie zwischen den Controllern; Loslassen übernimmt |
+| Trigger / B / A (im Zeichenmodus) | Ecke setzen / Raum fertigstellen / letzte Ecke zurück — A/B-Normalbelegung pausiert solange |
 | Y (links) | Minimap am rechten Handgelenk ein-/ausblenden |
 | Menü-Taste (links) | Bedienpanel ein-/ausblenden (erscheint vor dir) |
 
@@ -135,6 +136,19 @@ Button-Druck bricht ab), Deckkraft-Slider, **RSSI-Bereichsfilter**
 
 **Handgelenk-HUD** (linkes Handgelenk): REC-Status, Punkte, RSSI, SSID,
 Ansicht, Deckkraft, Tastenbelegung, Farblegende.
+
+**Raum zeichnen** (manueller Grundriss, kein Space Setup nötig): Panel-Button
+startet den Modus — ein Punkt schwebt vor dem rechten Controller (Distanz im
+`SceneBootstrap` einstellbar) und klebt auf der bekannten Bodenebene
+(Zeigehöhe wird ignoriert, reine Draufsicht). Trigger setzt reihum die Ecken
+(beliebig viele, im oder gegen den Uhrzeigersinn), ab der zweiten Ecke werden
+Linien gezeichnet. Schließen: B-Taste (letzte→erste Ecke) oder **Einrasten** —
+nahe der ersten Ecke rastet der Cursor ein und wird grün, Trigger schließt.
+A = letzte Ecke zurück. Mehrere Räume nacheinander möglich; die Grundrisse
+bleiben sichtbar. Export bei jedem Daten-Export: `<stem>_rooms.svg`
+(**maßstabsgetreu, 1 Unit = 1 mm**, Wandlängen in Metern beschriftet, nach
+Grid-Kalibrierung achsparallel) + `<stem>_rooms.json` (Roh-Ecken, Basis für
+einen späteren 3D-Export).
 
 **Minimap** (rechtes Handgelenk): die komplette Boden-Heatmap als nord-feste,
 maßstabsgetreue Karte (graue Zellen = noch unvermessen) mit einem Pfeilmarker

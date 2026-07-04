@@ -78,6 +78,16 @@ namespace WifiScanner
                  "the left controller's menu button.")]
         public bool enableControlPanel = true;
 
+        [Header("Room tracing")]
+        [Tooltip("Manual floor-plan tracing (panel button 'Raum zeichnen'): " +
+                 "place room corners with the right controller, export as " +
+                 "real-scale SVG. No Space Setup scan needed.")]
+        public bool enableRoomTracer = true;
+        [Tooltip("Distance of the tracing cursor in front of the controller (m).")]
+        public float roomCursorDistance = 0.3f;
+        [Tooltip("Snap distance to the first corner for closing a room (m).")]
+        public float roomSnapRadius = 0.3f;
+
         [Header("Minimap")]
         [Tooltip("North-up heatmap minimap on the right wrist with a headset " +
                  "position/direction marker. Toggle: left Y button or panel.")]
@@ -189,6 +199,18 @@ namespace WifiScanner
                 gridCal.lineMaterial = pointMaterialOverride;
             }
 
+            // --- Manual room tracing (floor-plan corners -> SVG export) ---
+            RoomTracer roomTracer = null;
+            if (enableRoomTracer)
+            {
+                roomTracer = gameObject.AddComponent<RoomTracer>();
+                roomTracer.floor = floor;
+                roomTracer.visualMaterial = pointMaterialOverride;
+                roomTracer.cursorDistance = roomCursorDistance;
+                roomTracer.snapRadius = roomSnapRadius;
+                _collector.roomTracer = roomTracer;
+            }
+
             // --- Minimap on the right wrist (needs the floor heatmap as source) ---
             MinimapController minimap = null;
             if (enableMinimap && floor != null)
@@ -214,6 +236,7 @@ namespace WifiScanner
             {
                 var controls = gameObject.AddComponent<RecordingControls>();
                 controls.collector = _collector;
+                controls.tracer = roomTracer;
             }
 
             // --- Left thumbstick controls opacity (points + floor heatmap) ---
@@ -242,6 +265,7 @@ namespace WifiScanner
                 panel.occlusion = occlusion;
                 panel.minimap = minimap;
                 panel.gridCalibrator = gridCal;
+                panel.roomTracer = roomTracer;
             }
 
             Debug.Log("[SceneBootstrap] WiFi scanner initialised " +

@@ -92,5 +92,105 @@ namespace WifiScanner
             Debug.Log($"[DataExporter] Wrote room mesh OBJ to {path}");
             return path;
         }
+
+        [Serializable]
+        private class RoomList
+        {
+            public float gridYawDegrees;
+            public List<RoomOutline> rooms;
+        }
+
+        /// <summary>
+        /// Writes the manually traced rooms as a real-scale SVG floor plan
+        /// (1 SVG user unit = 1 mm, width/height in mm => defined real
+        /// measurements) with each wall labelled with its length in metres,
+        /// plus the raw corners as JSON (basis for a later 3D export).
+        /// Corners are rotated into grid space so walls are axis-parallel
+        /// after the wall calibration.
+        /// </summary>
+        public static string ExportRoomsSvg(IReadOnlyList<RoomOutline> rooms,
+            float gridYawDegrees, string stem)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string dir = Application.persistentDataPath;
+
+            // World XZ -> grid space (mm), SVG y axis points down => flip Z.
+            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYawDegrees, 0f);
+            var roomsMm = new List<List<Vector2>>();
+            float minX = float.MaxValue, minY = float.MaxValue;
+            float maxX = float.MinValue, maxY = float.MinValue;
+            foreach (var room in rooms)
+            {
+                var pts = new List<Vector2>(room.cornersXZ.Count);
+                foreach (var c in room.cornersXZ)
+                {
+                    Vector3 g = worldToGrid * new Vector3(c.x, 0f, c.y);
+                    var p = new Vector2(g.x * 1000f, -g.z * 1000f);
+                    pts.Add(p);
+                    if (p.x < minX) minX = p.x;
+                    if (p.x > maxX) maxX = p.x;
+                    if (p.y < minY) minY = p.y;
+                    if (p.y > maxY) maxY = p.y;
+                }
+                roomsMm.Add(pts);
+            }
+
+            const float margin = 250f; // mm
+            float w = maxX - minX + 2f * margin;
+            float h = maxY - minY + 2f * margin;
+            Vector2 offset = new Vector2(margin - minX, margin - minY);
+
+            var sb = new StringBuilder();
+            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            sb.AppendLine(string.Format(inv,
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{0:F0}mm\" " +
+                "height=\"{1:F0}mm\" viewBox=\"0 0 {0:F0} {1:F0}\">", w, h));
+            sb.AppendLine(string.Format(inv,
+                "  <!-- Quest3 WiFi-Scanner Grundriss | {0:yyyy-MM-dd HH:mm} | " +
+                "1 unit = 1 mm | gridYaw {1:F1} deg | {2} Raum/Räume -->",
+                DateTime.Now, gridYawDegrees, rooms.Count));
+
+            foreach (var pts in roomsMm)
+            {
+                sb.Append("  <polygon fill=\"#4488cc\" fill-opacity=\"0.06\" " +
+                          "stroke=\"#222222\" stroke-width=\"20\" points=\"");
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    if (i > 0) sb.Append(' ');
+                    Vector2 p = pts[i] + offset;
+                    sb.Append(p.x.ToString("F0", inv)).Append(',')
+                      .Append(p.y.ToString("F0", inv));
+                }
+                sb.AppendLine("\"/>");
+
+                // Wall lengths in metres at each edge midpoint.
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    Vector2 a = pts[i] + offset;
+                    Vector2 b = pts[(i + 1) % pts.Count] + offset;
+                    Vector2 mid = (a + b) * 0.5f;
+                    float meters = Vector2.Distance(a, b) / 1000f;
+                    sb.AppendLine(string.Format(inv,
+                        "  <text x=\"{0:F0}\" y=\"{1:F0}\" font-size=\"120\" " +
+                        "fill=\"#333333\" text-anchor=\"middle\">{2:F2} m</text>",
+                        mid.x, mid.y, meters));
+                }
+            }
+            sb.AppendLine("</svg>");
+
+            string svgPath = Path.Combine(dir, $"{stem}_rooms.svg");
+            File.WriteAllText(svgPath, sb.ToString());
+
+            var wrapper = new RoomList
+            {
+                gridYawDegrees = gridYawDegrees,
+                rooms = new List<RoomOutline>(rooms),
+            };
+            File.WriteAllText(Path.Combine(dir, $"{stem}_rooms.json"),
+                JsonUtility.ToJson(wrapper, true));
+
+            Debug.Log($"[DataExporter] Wrote {rooms.Count} room outline(s) to {svgPath}");
+            return svgPath;
+        }
     }
 }

@@ -162,10 +162,26 @@ namespace WifiScanner
         /// </summary>
         private float ResolveFloorY(float minSampleY)
         {
-            if (_xrOrigin != null &&
-                _xrOrigin.CurrentTrackingOriginMode == TrackingOriginModeFlags.Floor)
-                return _xrOrigin.transform.position.y + floorOffset;
+            if (TryGetTrackedFloorY(_xrOrigin, out float floorY))
+                return floorY + floorOffset;
             return minSampleY - 1.2f + floorOffset;
+        }
+
+        /// <summary>
+        /// True (with the physical floor's world Y) when the XR Origin runs a
+        /// floor-based tracking origin — the Quest's default, calibrated by the
+        /// system. Shared by the heatmap and the room tracer.
+        /// </summary>
+        public static bool TryGetTrackedFloorY(XROrigin origin, out float floorY)
+        {
+            if (origin != null &&
+                origin.CurrentTrackingOriginMode == TrackingOriginModeFlags.Floor)
+            {
+                floorY = origin.transform.position.y;
+                return true;
+            }
+            floorY = 0f;
+            return false;
         }
 
         private void OnDisable()

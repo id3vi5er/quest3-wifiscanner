@@ -33,6 +33,7 @@ namespace WifiScanner
         public DynamicOcclusionController occlusion;
         public MinimapController minimap;
         public GridCalibrator gridCalibrator;
+        public RoomTracer roomTracer;
 
         [Header("Placement")]
         [Tooltip("Distance in front of the user when (re)summoned (m).")]
@@ -53,6 +54,7 @@ namespace WifiScanner
         private TextMeshProUGUI _occlusionLabel;
         private TextMeshProUGUI _minimapLabel;
         private TextMeshProUGUI _gridLabel;
+        private TextMeshProUGUI _roomLabel;
         private TextMeshProUGUI _filterLabel;
         private int _filterMin = FilterRangeMin;
         private int _filterMax = FilterRangeMax;
@@ -150,6 +152,8 @@ namespace WifiScanner
 
         private void OnGridCalibrateClicked() => gridCalibrator?.ToggleArmed();
 
+        private void OnRoomTraceClicked() => roomTracer?.ToggleActive();
+
         private void OnOpacityChanged(float value01)
         {
             cloud?.SetOpacity(value01);
@@ -190,13 +194,19 @@ namespace WifiScanner
                 ? $"Min {min} / Max {max} / Ø {avg:F0} dBm"
                 : "Min – / Max – / Ø – dBm";
 
+            string traceHint = roomTracer != null && roomTracer.IsActive
+                ? "\n<color=#00dcff>Raum: Trigger=Ecke, B=fertig, A=zurück, " +
+                  "Einrasten an Ecke 1</color>"
+                : "";
+
             _statsText.text =
                 $"{rec}   {secs / 60:D2}:{secs % 60:D2}   " +
                 $"Ansicht: {(modeController != null ? modeController.ModeLabel : "-")}\n" +
                 $"Punkte: {collector.SampleCount}    " +
                 $"RSSI: {collector.LastRssi} dBm\n" +
                 $"{stats}\n" +
-                $"SSID: {collector.LastSsid}";
+                $"SSID: {collector.LastSsid}" +
+                traceHint;
 
             if (_modeLabel != null && modeController != null)
                 _modeLabel.text = $"Ansicht: {modeController.ModeLabel}";
@@ -211,10 +221,14 @@ namespace WifiScanner
                 _minimapLabel.text = minimap.IsVisible ? "Minimap: an" : "Minimap: aus";
             if (_gridLabel != null && gridCalibrator != null)
                 _gridLabel.text = gridCalibrator.IsArmed
-                    ? "An Wand halten, beide Grips drücken, loslassen"
+                    ? "Grips halten,\nloslassen = fertig"
                     : (floor != null && Mathf.Abs(floor.gridYawDegrees) > 0.05f
                         ? $"Grid ausrichten ({floor.gridYawDegrees:F0}°)"
                         : "Grid ausrichten");
+            if (_roomLabel != null && roomTracer != null)
+                _roomLabel.text = roomTracer.IsActive
+                    ? "Zeichnen beenden"
+                    : $"Raum zeichnen ({roomTracer.Rooms.Count})";
         }
 
         private void PlaceInFrontOfUser()
@@ -305,8 +319,11 @@ namespace WifiScanner
                 ("Minimap: an", OnMinimapClicked));
             _occlusionLabel = toggleLabels[0];
             _minimapLabel = toggleLabels[1];
-            _gridLabel = AddButtonRow(content.transform,
-                ("Grid ausrichten", OnGridCalibrateClicked))[0];
+            var traceLabels = AddButtonRow(content.transform,
+                ("Grid ausrichten", OnGridCalibrateClicked),
+                ("Raum zeichnen", OnRoomTraceClicked));
+            _gridLabel = traceLabels[0];
+            _roomLabel = traceLabels[1];
 
             float startOpacity = cloud != null ? cloud.opacity : 0.6f;
             AddSliderRow(content.transform, "Deckkraft", 0f, 1f, startOpacity,

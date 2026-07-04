@@ -36,6 +36,8 @@ namespace WifiScanner
         [Tooltip("Optional name prefix for exports: <name>_<Datum>_<Uhrzeit>. " +
                  "Empty = wifi_<Datum>_<Uhrzeit>. Set via the panel's name field.")]
         public string exportName = "";
+        [Tooltip("Optional: exports manually traced rooms as SVG+JSON next to CSV.")]
+        public RoomTracer roomTracer;
 
         [Header("Sampling")]
         [Tooltip("Minimum distance between points (m). A new point is only created " +
@@ -249,6 +251,8 @@ namespace WifiScanner
                 roomMesh.ExportObj(stem);
             if (floorHeatmap != null)
                 floorHeatmap.ExportPng(stem);
+            if (roomTracer != null)
+                roomTracer.ExportSvg(stem);
             return dir;
         }
 
