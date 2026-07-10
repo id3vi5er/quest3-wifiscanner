@@ -72,6 +72,11 @@ Beim Export schreibt die App nach `Application.persistentDataPath`:
   `<stem>_notes.json`, `<stem>_measure.json`
 - `wifi_autosave.*` als periodisch ueberschriebene Autosave-Dateien
 
+Das Web-Dashboard bietet zudem einen formatierten HTML Report, der alle Daten kombiniert visualisiert. Ein Beispiel des generierten HTML-Reports findest du hier:
+[Beispiel-Report ansehen (HTML)](assets/Example-Report.html) oder als Vorschau:
+
+![HTML Report Vorschau](assets/html_report.png)
+
 Das Haupt-JSON enthaelt inzwischen auch `floors` und `gridYawDegrees`, damit
 Scans spaeter mit Etagen und Rasterausrichtung wiederhergestellt werden
 koennen. Aktueller Restpunkt: Drill-/Ping-/Notiz-/Mess-Sidecars werden zwar
@@ -321,6 +326,8 @@ Das Dashboard zeigt live:
 - Ping-Knoten
 - Notizen
 - Etagenfilter
+
+![Webinterface Screenshot](assets/Screenshot-Webinterface.png)
 
 Zusaetzlich bietet es:
 
