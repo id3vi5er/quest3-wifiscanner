@@ -43,6 +43,10 @@ namespace WifiScanner
         public SampleCollector collector;
         [Tooltip("Optional: shows the active storey in the status line.")]
         public FloorManager floorManager;
+        [Tooltip("Optional: while the coverage prediction is visible, the map " +
+                 "shows ITS texture instead of the measured heatmap (same grid " +
+                 "space, so all overlays stay georeferenced).")]
+        public CoverageSimulator coverage;
 
         [Header("Wrist panel placement (relative to the right controller)")]
         public Vector3 panelLocalPosition = new Vector3(0f, 0.04f, -0.06f);
@@ -376,11 +380,25 @@ namespace WifiScanner
         }
 
         // Re-reads the texture reference (recreated on area growth) and keeps
-        // the image aspect equal to the mapped world area's aspect.
+        // the image aspect equal to the mapped world area's aspect. While the
+        // coverage prediction is showing, the map mirrors IT (same grid space).
         private void RefreshMap()
         {
-            _hasMap = floor.TryGetMapInfo(out Vector2 worldMin, out float cell,
-                out int w, out int h);
+            Vector2 worldMin;
+            float cell;
+            int w, h;
+            Texture2D sourceTex;
+            if (coverage != null && coverage.IsVisible &&
+                coverage.TryGetMapInfo(out worldMin, out cell, out w, out h))
+            {
+                _hasMap = true;
+                sourceTex = coverage.CoverageTexture;
+            }
+            else
+            {
+                _hasMap = floor.TryGetMapInfo(out worldMin, out cell, out w, out h);
+                sourceTex = floor.HeatmapTexture;
+            }
             _map.enabled = _hasMap;
             _placeholder.gameObject.SetActive(!_hasMap);
             _marker.gameObject.SetActive(_hasMap);
@@ -391,8 +409,8 @@ namespace WifiScanner
                 return;
             }
 
-            if (_map.texture != floor.HeatmapTexture)
-                _map.texture = floor.HeatmapTexture;
+            if (_map.texture != sourceTex)
+                _map.texture = sourceTex;
 
             float worldW = w * cell;
             float worldH = h * cell;

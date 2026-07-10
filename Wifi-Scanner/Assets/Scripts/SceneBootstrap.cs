@@ -336,6 +336,11 @@ namespace WifiScanner
                 coverage.floorManager = floorManager;
                 coverage.floorMaterial = floorMaterialOverride;
                 coverage.wallLoss = wallLoss;
+                coverage.floor = floor;               // shared grid space
+                coverage.modeController = vizMode;    // floor hand-over
+                vizMode.coverage = coverage;
+                if (minimap != null) minimap.coverage = coverage;
+                _collector.coverage = coverage;       // _coverage.png on export
             }
 
             // --- Ping tester (latency nodes) ---
@@ -448,6 +453,7 @@ namespace WifiScanner
             var opacityControls = gameObject.AddComponent<OpacityControls>();
             opacityControls.cloud = cloud;
             opacityControls.floor = floor;
+            opacityControls.coverage = coverage;
 
             // --- Tool palette (left wrist): tap a tool with the right ray ---
             if (enableToolPalette)

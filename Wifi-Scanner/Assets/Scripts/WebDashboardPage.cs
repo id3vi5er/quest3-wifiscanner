@@ -54,6 +54,7 @@ namespace WifiScanner
   <select id='mode'>
     <option value='points'>Messpunkte</option>
     <option value='heat'>Heatmap (interpoliert)</option>
+    <option value='forecast'>Prognose (simuliert)</option>
     <option value='3d'>3D-R&auml;ume (Etagen-Stapel)</option>
   </select>
 
@@ -176,7 +177,8 @@ function computeTransform(pts) {
   let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
   const add = (x, z) => { const g = gr(x, z); if (g[0] < minx) minx = g[0]; if (g[0] > maxx) maxx = g[0]; if (g[1] < minz) minz = g[1]; if (g[1] > maxz) maxz = g[1]; };
   pts.forEach(p => add(p.x, p.z));
-  if (L.rooms) S.rooms.forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
+  if (L.rooms || mode === 'forecast')
+    S.rooms.forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
   if (minx > maxx) { minx = -2; maxx = 2; minz = -2; maxz = 2; }
   const pad = 0.6;
   minx -= pad; maxx += pad; minz -= pad; maxz += pad;
@@ -199,6 +201,7 @@ function draw() {
   cx.clearRect(0, 0, cv.width, cv.height);
 
   if (mode === 'heat') drawHeatmap(pts);
+  else if (mode === 'forecast') drawForecast();
   else if (L.points) pts.forEach(p => {
     cx.fillStyle = rssiColor(p.r);
     const q = P(p.x, p.z);
@@ -252,6 +255,104 @@ function drawHeatmap(pts) {
       cx.fillRect(sx(wx) - cs / 2, sy(wz) - cs / 2, cs, cs);
     }
   }
+}
+
+// ---- Coverage forecast: same model as the in-app CoverageSimulator ----
+// (P1m − 10·n·log10(d) − 5 dB per crossed wall). AP priority: virtual-AP
+// notes → real fix; without any AP the field renders solid red (alarm).
+// Cached into an offscreen canvas — the simulation is too heavy per frame.
+let fcCanvas = null, fcKey = '';
+
+function forecastKey() {
+  const vaps = (S.notes || []).filter(n => n.type === 'VirtualAp')
+    .map(n => [n.posX.toFixed(2), n.posZ.toFixed(2)]);
+  const ap = S.apfix ? [S.apfix.posX.toFixed(2), S.apfix.posZ.toFixed(2),
+    S.apfix.pathLossN, S.apfix.powerAt1m] : null;
+  return JSON.stringify([S.rooms.length,
+    S.rooms.map(r => (r.cornersXZ || []).length), vaps, ap, gridYaw,
+    cv.width, cv.height, T.minx, T.minz, T.scale]);
+}
+
+function drawForecast() {
+  if (!S.rooms.length) {
+    label('Prognose: erst Räume zeichnen', cv.width / 2, 24, '#e0a03c');
+    return;
+  }
+  const key = forecastKey();
+  if (key !== fcKey || !fcCanvas) { fcKey = key; renderForecast(); }
+  if (fcCanvas) cx.drawImage(fcCanvas, 0, 0);
+  const hasAp = (S.notes || []).some(n => n.type === 'VirtualAp') || S.apfix;
+  if (!hasAp)
+    label('Kein AP: virtuellen AP setzen (Notiz) oder messen', cv.width / 2, 24, '#ff5544');
+}
+
+function renderForecast() {
+  fcCanvas = document.createElement('canvas');
+  fcCanvas.width = cv.width; fcCanvas.height = cv.height;
+  const fc = fcCanvas.getContext('2d');
+
+  // Walls + bounds in grid space.
+  const walls = [];
+  let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
+  S.rooms.forEach(r => {
+    const c = r.cornersXZ || [], n = c.length;
+    for (let i = 0; i < n; i++) {
+      const a = gr(c[i].x, c[i].y), b = gr(c[(i + 1) % n].x, c[(i + 1) % n].y);
+      walls.push([a[0], a[1], b[0], b[1]]);
+      if (a[0] < minx) minx = a[0]; if (a[0] > maxx) maxx = a[0];
+      if (a[1] < minz) minz = a[1]; if (a[1] > maxz) maxz = a[1];
+    }
+  });
+  if (!walls.length) return;
+  minx -= 1; maxx += 1; minz -= 1; maxz += 1;
+
+  // AP sources: virtual notes first, else the fitted real AP.
+  const n = (S.apfix && S.apfix.pathLossN) ? S.apfix.pathLossN : 2.7;
+  const aps = [];
+  (S.notes || []).forEach(nt => {
+    if (nt.type === 'VirtualAp') {
+      const g = gr(nt.posX, nt.posZ);
+      aps.push({ x: g[0], z: g[1], p1: -40, n: n });
+    }
+  });
+  if (!aps.length && S.apfix) {
+    const g = gr(S.apfix.posX, S.apfix.posZ);
+    aps.push({ x: g[0], z: g[1], p1: (S.apfix.powerAt1m || -40), n: n });
+  }
+
+  const cell = Math.max(0.15,
+    Math.sqrt(Math.max(0.5, maxx - minx) * Math.max(0.5, maxz - minz) / 15000));
+  const cs = cell * T.scale + 1;
+  const nx = Math.ceil((maxx - minx) / cell), nz = Math.ceil((maxz - minz) / cell);
+  for (let iz = 0; iz < nz; iz++) {
+    const wz = minz + (iz + 0.5) * cell;
+    for (let ix = 0; ix < nx; ix++) {
+      const wx = minx + (ix + 0.5) * cell;
+      if (!aps.length) {
+        fc.fillStyle = 'rgb(200,25,20)';
+      } else {
+        let best = -127;
+        for (const ap of aps) {
+          const d = Math.max(0.3, Math.hypot(wx - ap.x, wz - ap.z, 1.4));
+          let r = ap.p1 - 10 * ap.n * Math.log10(d);
+          for (const w of walls)
+            if (segInt(wx, wz, ap.x, ap.z, w[0], w[1], w[2], w[3])) r -= 5;
+          if (r > best) best = r;
+        }
+        fc.fillStyle = rssiColor(best);
+      }
+      fc.fillRect(sx(wx) - cs / 2, sy(wz) - cs / 2, cs, cs);
+    }
+  }
+}
+
+function segInt(p1x, p1z, p2x, p2z, q1x, q1z, q2x, q2z) {
+  const d1 = (q2x - q1x) * (p1z - q1z) - (q2z - q1z) * (p1x - q1x);
+  const d2 = (q2x - q1x) * (p2z - q1z) - (q2z - q1z) * (p2x - q1x);
+  const d3 = (p2x - p1x) * (q1z - p1z) - (p2z - p1z) * (q1x - p1x);
+  const d4 = (p2x - p1x) * (q2z - p1z) - (p2z - p1z) * (q2x - p1x);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
 }
 
 function drawTrail() {
@@ -393,7 +494,9 @@ function draw3d(pts) {
   const cyaw = Math.cos(yaw3), syaw = Math.sin(yaw3);
   const cp = Math.cos(pitch3), sp = Math.sin(pitch3);
   const V = (x, y, z) => {
-    const dx = x - ctr.x, dy = y - ctr.y, dz = z - ctr.z;
+    // X negated: Unity is left-handed — without the mirror the floor plan
+    // appears flipped (same convention as the OBJ export).
+    const dx = ctr.x - x, dy = y - ctr.y, dz = z - ctr.z;
     const rx = dx * cyaw - dz * syaw;
     const rz = dx * syaw + dz * cyaw;
     const ry = dy * cp - rz * sp;

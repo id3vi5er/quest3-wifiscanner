@@ -32,6 +32,11 @@ namespace WifiScanner
         public SpatialNoteManager spatialNotes; // optional (virtual APs)
         public ApLocator apLocator;             // optional (real AP + fit)
         public FloorManager floorManager;       // optional (active storey)
+        [Tooltip("Measured heatmap — supplies the grid yaw so both rasters " +
+                 "share one grid space (minimap compatibility); it also yields " +
+                 "the floor display to the prediction while this is visible.")]
+        public FloorHeatmapRenderer floor;
+        public VisualizationModeController modeController; // optional
         [Tooltip("Material ASSET (URP Unlit, transparent) — same as the heatmap.")]
         public Material floorMaterial;
 
@@ -76,6 +81,11 @@ namespace WifiScanner
         private float _timer;
         private int _changeHash;
         private bool _rebuilding;
+        // Georeference of the current texture (grid space, like the heatmap).
+        private Vector2 _worldMin;
+        private float _cell;
+        private int _texW, _texH;
+        private bool _hasField;
 
         private static readonly int BaseMapId = Shader.PropertyToID("_BaseMap");
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
@@ -130,10 +140,42 @@ namespace WifiScanner
             if (!visible)
             {
                 if (_quadGo != null) _quadGo.SetActive(false);
-                return;
             }
-            _changeHash = 0; // force a rebuild on the next Update
-            _timer = updateInterval;
+            else
+            {
+                _changeHash = 0; // force a rebuild on the next Update
+                _timer = updateInterval;
+            }
+            // The measured heatmap yields the floor to the prediction (and
+            // comes back per the current view mode when it's turned off).
+            modeController?.ReapplyVisibility();
+        }
+
+        /// <summary>Prediction quad opacity (material tint), same behaviour as
+        /// the measured heatmap — driven by the left stick / panel slider for
+        /// whichever heatmap is currently active.</summary>
+        public void SetOpacity(float value01)
+        {
+            opacity = Mathf.Clamp01(value01);
+            if (_mat != null)
+                _mat.SetColor(BaseColorId, new Color(1f, 1f, 1f, opacity));
+        }
+
+        /// <summary>Live prediction texture for the minimap (recreated when
+        /// the area grows — re-read the reference periodically).</summary>
+        public Texture2D CoverageTexture => _tex;
+
+        /// <summary>Georeference of the prediction texture (grid space, same
+        /// convention as FloorHeatmapRenderer.TryGetMapInfo). False until the
+        /// first simulation pass has produced a field.</summary>
+        public bool TryGetMapInfo(out Vector2 worldMinXZ, out float cellSize,
+            out int width, out int height)
+        {
+            worldMinXZ = _worldMin;
+            cellSize = _cell;
+            width = _texW;
+            height = _texH;
+            return _hasField && _tex != null;
         }
 
         private void Update()
@@ -165,6 +207,8 @@ namespace WifiScanner
                         ^ Mathf.RoundToInt(room.floorY * 100f);
             }
             if (floorManager != null) h = h * 31 + floorManager.ActiveIndex;
+            if (floor != null)
+                h = h * 31 + Mathf.RoundToInt(floor.gridYawDegrees * 10f);
             return h;
         }
 
@@ -197,23 +241,32 @@ namespace WifiScanner
         {
             _rebuilding = true;
 
-            var aps = CollectAps();
-            if (aps.Count == 0)
-            {
-                StatusHint = "Prognose: virtuellen AP setzen (Notiz) oder AP-Fix abwarten";
-                _quadGo.SetActive(false);
-                _rebuilding = false;
-                yield break;
-            }
             if (roomTracer == null || roomTracer.Rooms.Count == 0)
             {
                 StatusHint = "Prognose: erst Räume zeichnen";
                 _quadGo.SetActive(false);
+                _hasField = false;
                 _rebuilding = false;
                 yield break;
             }
 
-            // --- Walls + bounds of the active storey's rooms ---
+            // AP priority: virtual AP note(s) → real fix. No AP at all still
+            // renders — as a solid red field (alarm state).
+            var aps = CollectAps();
+            bool noAp = aps.Count == 0;
+
+            // Everything rasterises in GRID space (world rotated by −gridYaw),
+            // the same frame the measured heatmap uses — so the minimap can
+            // swap textures without touching its overlay georeference.
+            float gridYaw = floor != null ? floor.gridYawDegrees : 0f;
+            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYaw, 0f);
+            Vector2 ToGrid(Vector2 xz)
+            {
+                Vector3 g = worldToGrid * new Vector3(xz.x, 0f, xz.y);
+                return new Vector2(g.x, g.z);
+            }
+
+            // --- Walls + bounds of the active storey's rooms (grid space) ---
             float baseY = floorManager != null && floorManager.Floors.Count > 0
                 ? floorManager.ActiveBaseY
                 : roomTracer.Rooms[0].floorY;
@@ -228,8 +281,8 @@ namespace WifiScanner
                 int corners = room.cornersXZ.Count;
                 for (int e = 0; e < corners; e++)
                 {
-                    Vector2 a = room.cornersXZ[e];
-                    Vector2 b = room.cornersXZ[(e + 1) % corners];
+                    Vector2 a = ToGrid(room.cornersXZ[e]);
+                    Vector2 b = ToGrid(room.cornersXZ[(e + 1) % corners]);
                     float loss = defaultWallLossDb;
                     if (_wallLoss != null && _wallLoss.TryGetWallLoss(r, e, out float est))
                         loss = est;
@@ -242,10 +295,13 @@ namespace WifiScanner
             {
                 StatusHint = "Prognose: keine Räume auf dieser Etage";
                 _quadGo.SetActive(false);
+                _hasField = false;
                 _rebuilding = false;
                 yield break;
             }
-            StatusHint = "";
+            StatusHint = noAp
+                ? "Prognose: kein AP — virtuellen AP setzen (Notiz) oder messen"
+                : "";
 
             minX -= padding; maxX += padding;
             minZ -= padding; maxZ += padding;
@@ -256,45 +312,59 @@ namespace WifiScanner
             int h = Mathf.Max(2, Mathf.CeilToInt(sizeZ / cell));
 
             var pixels = new Color32[w * h];
-            int budget = Mathf.Max(512, cellsPerFrame);
-            float sampleY = baseY + 1.4f; // predict at ~device height
-
-            for (int ty = 0; ty < h; ty++)
+            if (noAp)
             {
-                float wz = minZ + (ty + 0.5f) * cell;
-                for (int tx = 0; tx < w; tx++)
+                var red = new Color32(200, 25, 20, 255);
+                for (int i = 0; i < pixels.Length; i++) pixels[i] = red;
+            }
+            else
+            {
+                // AP positions projected into grid space (Y is yaw-invariant).
+                var apGrid = new Vector2[aps.Count];
+                for (int i = 0; i < aps.Count; i++)
+                    apGrid[i] = ToGrid(new Vector2(aps[i].pos.x, aps[i].pos.z));
+
+                int budget = Mathf.Max(512, cellsPerFrame);
+                float sampleY = baseY + 1.4f; // predict at ~device height
+
+                for (int ty = 0; ty < h; ty++)
                 {
-                    float wx = minX + (tx + 0.5f) * cell;
-                    var p = new Vector2(wx, wz);
-
-                    float best = -127f;
-                    foreach (var ap in aps)
+                    float wz = minZ + (ty + 0.5f) * cell;
+                    for (int tx = 0; tx < w; tx++)
                     {
-                        float d = Vector3.Distance(
-                            new Vector3(wx, sampleY, wz), ap.pos);
-                        float rssi = ap.p1m
-                            - 10f * ap.n * Mathf.Log10(Mathf.Max(d, 0.3f));
-                        var apXZ = new Vector2(ap.pos.x, ap.pos.z);
-                        foreach (var wall in walls)
-                            if (SegmentsIntersect(p, apXZ, wall.a, wall.b))
-                                rssi -= wall.lossDb;
-                        if (rssi > best) best = rssi;
-                    }
+                        float wx = minX + (tx + 0.5f) * cell;
+                        var p = new Vector2(wx, wz);
 
-                    Color c = HeatmapColorMapper.Map(Mathf.RoundToInt(best));
-                    pixels[ty * w + tx] = new Color32(
-                        (byte)(c.r * 255f), (byte)(c.g * 255f),
-                        (byte)(c.b * 255f), 255);
+                        float best = -127f;
+                        for (int i = 0; i < aps.Count; i++)
+                        {
+                            float dx = wx - apGrid[i].x;
+                            float dy = sampleY - aps[i].pos.y;
+                            float dz = wz - apGrid[i].y;
+                            float d = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
+                            float rssi = aps[i].p1m
+                                - 10f * aps[i].n * Mathf.Log10(Mathf.Max(d, 0.3f));
+                            foreach (var wall in walls)
+                                if (SegmentsIntersect(p, apGrid[i], wall.a, wall.b))
+                                    rssi -= wall.lossDb;
+                            if (rssi > best) best = rssi;
+                        }
 
-                    if (--budget <= 0)
-                    {
-                        budget = Mathf.Max(512, cellsPerFrame);
-                        yield return null;
+                        Color c = HeatmapColorMapper.Map(Mathf.RoundToInt(best));
+                        pixels[ty * w + tx] = new Color32(
+                            (byte)(c.r * 255f), (byte)(c.g * 255f),
+                            (byte)(c.b * 255f), 255);
+
+                        if (--budget <= 0)
+                        {
+                            budget = Mathf.Max(512, cellsPerFrame);
+                            yield return null;
+                        }
                     }
                 }
             }
 
-            // --- Texture + quad placement (axis-aligned world grid) ---
+            // --- Texture + quad placement (grid rotated back into the world) ---
             if (!EnsureMaterial()) { _rebuilding = false; yield break; }
             if (_tex == null || _tex.width != w || _tex.height != h)
             {
@@ -309,15 +379,76 @@ namespace WifiScanner
             _tex.SetPixels32(pixels);
             _tex.Apply(false);
 
+            _worldMin = new Vector2(minX, minZ);
+            _cell = cell;
+            _texW = w;
+            _texH = h;
+            _hasField = true;
+
             float quadW = w * cell;
             float quadH = h * cell;
-            _quadGo.transform.position = new Vector3(
-                minX + quadW * 0.5f, baseY + floorOffset, minZ + quadH * 0.5f);
-            _quadGo.transform.rotation = Quaternion.identity;
+            Quaternion gridToWorld = Quaternion.Euler(0f, gridYaw, 0f);
+            Vector3 centerWorld = gridToWorld * new Vector3(
+                minX + quadW * 0.5f, 0f, minZ + quadH * 0.5f);
+            _quadGo.transform.SetPositionAndRotation(
+                new Vector3(centerWorld.x, baseY + floorOffset, centerWorld.z),
+                gridToWorld);
             _quadGo.transform.localScale = new Vector3(quadW, 1f, quadH);
             _quadGo.SetActive(IsVisible);
 
             _rebuilding = false;
+        }
+
+        [System.Serializable]
+        private class CoverageMeta
+        {
+            public float worldMinX, worldMinZ;
+            public float cellSizeMeters;
+            public int width, height;
+            public float gridYawDegrees;
+            public string note;
+        }
+
+        /// <summary>
+        /// Writes the prediction as {stem}_coverage.png plus a georeference
+        /// JSON (same grid-space convention as the heatmap export). Runs one
+        /// synchronous simulation pass so the file is fresh even when the
+        /// prediction was never shown. Null when there is nothing to predict
+        /// (no rooms, or neither a virtual nor a fitted AP).
+        /// </summary>
+        public byte[] ExportPng(string stem)
+        {
+            if (roomTracer == null || roomTracer.Rooms.Count == 0 ||
+                CollectAps().Count == 0)
+                return null;
+            if (!_rebuilding)
+            {
+                var pass = Rebuild();
+                while (pass.MoveNext()) { } // drain synchronously
+            }
+            if (!_hasField || _tex == null) return null;
+
+            byte[] png = _tex.EncodeToPNG();
+            string dir = Application.persistentDataPath;
+            string pngPath = System.IO.Path.Combine(dir, $"{stem}_coverage.png");
+            System.IO.File.WriteAllBytes(pngPath, png);
+
+            var meta = new CoverageMeta
+            {
+                worldMinX = _worldMin.x,
+                worldMinZ = _worldMin.y,
+                cellSizeMeters = _cell,
+                width = _texW,
+                height = _texH,
+                gridYawDegrees = floor != null ? floor.gridYawDegrees : 0f,
+                note = "simulated coverage (path-loss + wall attenuation); " +
+                       "same grid-space georeference as the heatmap PNG",
+            };
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(dir, $"{stem}_coverage.json"),
+                JsonUtility.ToJson(meta, true));
+            Debug.Log($"[CoverageSimulator] Wrote coverage PNG to {pngPath}");
+            return png;
         }
 
         private bool EnsureMaterial()

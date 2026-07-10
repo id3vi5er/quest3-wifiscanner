@@ -28,7 +28,7 @@ namespace WifiScanner
         private static readonly string[] SidecarSuffixes =
         {
             "_rooms", "_drill", "_apfix", "_ping", "_notes", "_measure",
-            "_heatmap", "_walls", "_report",
+            "_heatmap", "_walls", "_report", "_coverage",
         };
 
         /// <summary>
@@ -511,6 +511,66 @@ namespace WifiScanner
                 $"{stem}_walls.json");
             File.WriteAllText(path, JsonUtility.ToJson(wrapper, true));
             Debug.Log($"[DataExporter] Wrote {walls.Count} wall loss estimate(s) to {path}");
+            return path;
+        }
+
+        /// <summary>
+        /// Floor plan SVG with the estimated wall attenuations written directly
+        /// on the walls ({stem}_walls.svg) — the wall-loss table alone is hard
+        /// to map to real walls. Same real-scale mm layout as the rooms SVG;
+        /// the dB labels sit beside each wall's midpoint, offset into the room
+        /// (the wall LENGTH label sits on the midpoint itself).
+        /// </summary>
+        public static string ExportWallsSvg(IReadOnlyList<RoomOutline> rooms,
+            float gridYawDegrees, IReadOnlyList<WallLoss> losses, string stem)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var roomsMm = RoomsToGridMm(rooms, gridYawDegrees,
+                out Vector2 min, out Vector2 max);
+
+            const float margin = 250f; // mm
+            float w = max.x - min.x + 2f * margin;
+            float h = max.y - min.y + 2f * margin;
+            Vector2 offset = new Vector2(margin - min.x, margin - min.y);
+
+            var sb = new StringBuilder();
+            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            sb.AppendLine(string.Format(inv,
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{0:F0}mm\" " +
+                "height=\"{1:F0}mm\" viewBox=\"0 0 {0:F0} {1:F0}\">", w, h));
+            sb.AppendLine(string.Format(inv,
+                "  <!-- Quest3 WiFi-Scanner Wand-Dämpfungen | {0:yyyy-MM-dd HH:mm} | " +
+                "1 unit = 1 mm | gridYaw {1:F1} deg -->",
+                DateTime.Now, gridYawDegrees));
+            AppendRoomShapes(sb, rooms, roomsMm, offset, haloText: false);
+
+            foreach (var loss in losses)
+            {
+                if (loss.room >= roomsMm.Count) continue;
+                var pts = roomsMm[loss.room];
+                int n = pts.Count;
+                if (n < 3 || loss.edge >= n) continue;
+                Vector2 centroid = Vector2.zero;
+                foreach (var p in pts) centroid += p;
+                centroid /= n;
+                Vector2 a = pts[loss.edge] + offset;
+                Vector2 b = pts[(loss.edge + 1) % n] + offset;
+                Vector2 mid = (a + b) * 0.5f;
+                Vector2 inward = (centroid + offset - mid).normalized * 180f;
+                Vector2 pos = mid + inward;
+                sb.AppendLine(string.Format(inv,
+                    "  <text x=\"{0:F0}\" y=\"{1:F0}\" font-size=\"120\" " +
+                    "font-weight=\"bold\" fill=\"#cc4422\" text-anchor=\"middle\" " +
+                    "stroke=\"#ffffff\" stroke-width=\"30\" paint-order=\"stroke\">" +
+                    "{2:F1} dB</text>",
+                    pos.x, pos.y, loss.lossDb));
+            }
+            sb.AppendLine("</svg>");
+
+            string path = Path.Combine(Application.persistentDataPath,
+                $"{stem}_walls.svg");
+            File.WriteAllText(path, sb.ToString());
+            Debug.Log($"[DataExporter] Wrote wall-attenuation floor plan to {path}");
             return path;
         }
 

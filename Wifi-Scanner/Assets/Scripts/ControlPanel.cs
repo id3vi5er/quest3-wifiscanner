@@ -410,7 +410,11 @@ namespace WifiScanner
         private void OnOpacityChanged(float value01)
         {
             cloud?.SetOpacity(value01);
-            floor?.SetOpacity(value01);
+            // The slider fades whichever heatmap currently owns the floor.
+            if (coverage != null && coverage.IsVisible)
+                coverage.SetOpacity(value01);
+            else
+                floor?.SetOpacity(value01);
         }
 
         private void OnFilterMinChanged(float v)

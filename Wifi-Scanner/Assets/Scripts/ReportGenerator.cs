@@ -116,6 +116,15 @@ namespace WifiScanner
                       .Append("</td><td>").Append(w.samplesNear).Append(" / ")
                       .Append(w.samplesFar).AppendLine("</td></tr>");
                 sb.AppendLine("</table>");
+
+                // Floor plan with the dB values ON the walls — much easier to
+                // map to reality than the table indices.
+                string wallsSvg = Path.Combine(dir, $"{stem}_walls.svg");
+                if (File.Exists(wallsSvg))
+                {
+                    sb.AppendLine("<h3>Grundriss mit Wand-Dämpfungen</h3>");
+                    AppendInlineSvg(sb, wallsSvg);
+                }
             }
 
             // ---- Notes ----

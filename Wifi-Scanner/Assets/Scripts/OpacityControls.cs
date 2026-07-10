@@ -19,6 +19,9 @@ namespace WifiScanner
         public PointCloudRenderer cloud;
         [Tooltip("Optional: the floor heatmap fades together with the points.")]
         public FloorHeatmapRenderer floor;
+        [Tooltip("Optional: while the coverage prediction is visible, the " +
+                 "stick fades IT instead of the measured heatmap.")]
+        public CoverageSimulator coverage;
 
         [Tooltip("Opacity change per second at full stick deflection " +
                  "(0.6 = full 0..100% sweep in ~1.7 s).")]
@@ -49,7 +52,11 @@ namespace WifiScanner
             if (Mathf.Abs(y) < deadzone) return;
 
             cloud.SetOpacity(cloud.opacity + y * fadeSpeed * Time.deltaTime);
-            if (floor != null) floor.SetOpacity(cloud.opacity);
+            // Whichever heatmap is on the floor right now follows the stick.
+            if (coverage != null && coverage.IsVisible)
+                coverage.SetOpacity(cloud.opacity);
+            else if (floor != null)
+                floor.SetOpacity(cloud.opacity);
         }
     }
 }

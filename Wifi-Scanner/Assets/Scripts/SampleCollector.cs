@@ -48,6 +48,8 @@ namespace WifiScanner
         public DistanceMeasurer distanceMeasurer;
         [Tooltip("Optional: exports estimated wall attenuations (_walls.json).")]
         public WallLossEstimator wallLoss;
+        [Tooltip("Optional: exports the coverage prediction (_coverage.png).")]
+        public CoverageSimulator coverage;
         [Tooltip("Optional: multi-storey manager — tags each point with its floor.")]
         public FloorManager floorManager;
 
@@ -328,9 +330,18 @@ namespace WifiScanner
             {
                 wallLoss.Recompute(); // fresh estimate for the export
                 if (wallLoss.Losses.Count > 0)
+                {
                     DataExporter.ExportWallsJson(wallLoss.Losses,
                         apLocator.PathLossExponent, apLocator.PowerAt1mDbm, stem);
+                    // Floor plan with the dB values written on the walls —
+                    // the table alone is hard to map to real walls.
+                    if (roomTracer != null && roomTracer.Rooms.Count > 0)
+                        DataExporter.ExportWallsSvg(roomTracer.Rooms,
+                            floorHeatmap != null ? floorHeatmap.gridYawDegrees : 0f,
+                            wallLoss.Losses, stem);
+                }
             }
+            coverage?.ExportPng(stem); // null-op without rooms or AP source
 
             // Combined view: heatmap as background, floor plan on top —
             // both layers share the grid-space georeference.
