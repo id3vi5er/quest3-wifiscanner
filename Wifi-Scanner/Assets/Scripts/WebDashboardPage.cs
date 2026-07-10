@@ -61,6 +61,9 @@ namespace WifiScanner
   <h2>Etage</h2>
   <select id='floor'><option value='all'>Alle</option></select>
 
+  <h2>Access Point</h2>
+  <select id='ap'><option value='all'>Alle</option></select>
+
   <h2>Ebenen</h2>
   <label><input type='checkbox' id='l_points' checked> Messpunkte</label>
   <label><input type='checkbox' id='l_trail' checked> Laufpfad</label>
@@ -69,6 +72,7 @@ namespace WifiScanner
   <label><input type='checkbox' id='l_ap' checked> AP-Standort</label>
   <label><input type='checkbox' id='l_ping' checked> Pings</label>
   <label><input type='checkbox' id='l_notes' checked> Notizen</label>
+  <label><input type='checkbox' id='l_roam' checked> Roaming</label>
 
   <h2>Scans herunterladen</h2>
   <button id='btnExport'>Aktuellen Scan exportieren</button>
@@ -78,10 +82,12 @@ namespace WifiScanner
 <div id='main'><canvas id='c'></canvas></div>
 
 <script>
-const S = { points:[], pose:null, rooms:[], apfix:null, pings:[], notes:[], drills:[], trail:[] };
-const L = { points:true, trail:true, rooms:true, pose:true, ap:true, ping:true, notes:true };
+const S = { points:[], pose:null, rooms:[], apfix:null, apfixAll:null, pings:[], notes:[], drills:[], trail:[], roams:[] };
+const L = { points:true, trail:true, rooms:true, pose:true, ap:true, ping:true, notes:true, roam:true };
 let mode = 'points';
 let floorSel = 'all';
+let apSel = 'all';
+const apsSeen = new Map();
 let gridYaw = 0; // radians; aligns the map like the in-headset minimap
 const floorsSeen = new Set();
 
@@ -96,6 +102,7 @@ for (const k in L) {
 }
 document.getElementById('mode').addEventListener('change', e => { mode = e.target.value; draw(); });
 document.getElementById('floor').addEventListener('change', e => { floorSel = e.target.value; draw(); });
+document.getElementById('ap').addEventListener('change', e => { apSel = e.target.value; draw(); });
 document.getElementById('btnExport').addEventListener('click', () => {
   fetch('/export').then(() => setTimeout(loadFiles, 1500));
 });
@@ -129,24 +136,42 @@ function handle(m) {
       break;
     }
     case 'rooms': S.rooms = m.rooms || []; break;
-    case 'apfix': S.apfix = m; break;
+    case 'apfix': S.apfix = m; S.apfixAll = m.aps || null; break;
     case 'ping': S.pings = m.nodes || []; break;
     case 'notes': S.notes = m.notes || []; break;
     case 'drill': S.drills = m.lines || []; break;
+    case 'roam': S.roams = m.events || []; break;
     case 'clear': S.points = []; break;
   }
   draw();
 }
 
+function bandLabel(freq) {
+  if (freq >= 5925) return '6 GHz';
+  if (freq >= 4900) return '5 GHz';
+  if (freq >= 2300) return '2,4 GHz';
+  return '?';
+}
+
 function addPoint(s) {
   const f = s.floor || 0;
-  S.points.push({ x: s.posX, y: s.posY || 0, z: s.posZ, r: s.rssiDbm, f: f });
+  const b = s.bssid || '';
+  S.points.push({ x: s.posX, y: s.posY || 0, z: s.posZ, r: s.rssiDbm, f: f, b: b });
   if (S.points.length > 8000) S.points.shift();
   if (!floorsSeen.has(f)) {
     floorsSeen.add(f);
     const sel = document.getElementById('floor');
     const o = document.createElement('option');
-    o.value = f; o.textContent = f === 0 ? 'EG' : 'OG' + f;
+    o.value = f; o.textContent = 'Etage ' + (f + 1); // Index, unterste zuerst
+    sel.appendChild(o);
+  }
+  if (b && !apsSeen.has(b)) {
+    apsSeen.set(b, true);
+    const sel = document.getElementById('ap');
+    const o = document.createElement('option');
+    o.value = b;
+    o.textContent = 'AP ' + apsSeen.size + ' · ' + bandLabel(s.frequencyMhz || 0)
+      + ' (…' + b.slice(-5) + ')';
     sel.appendChild(o);
   }
 }
@@ -161,7 +186,9 @@ function rssiColor(r) {
 }
 
 function activePoints() {
-  return floorSel === 'all' ? S.points : S.points.filter(p => String(p.f) === String(floorSel));
+  return S.points.filter(p =>
+    (floorSel === 'all' || String(p.f) === String(floorSel)) &&
+    (apSel === 'all' || p.b === apSel));
 }
 
 // World XZ -> grid space (rotated by -gridYaw), matching the minimap so walls
@@ -212,7 +239,8 @@ function draw() {
   if (L.rooms) S.rooms.forEach(drawRoom);
   if (L.ping) S.pings.forEach(drawPing);
   if (L.notes) S.notes.forEach(drawNote);
-  if (L.ap && S.apfix) drawAp(S.apfix);
+  if (L.roam) S.roams.forEach(drawRoam);
+  if (L.ap) drawAps();
   if (L.pose && S.pose) drawPose(S.pose);
 
   updateStats(pts.length);
@@ -421,11 +449,37 @@ function drawPose(p) {
   cx.beginPath(); cx.moveTo(q[0], q[1]); cx.lineTo(tip[0], tip[1]); cx.stroke();
 }
 
-function drawAp(ap) {
-  const q = P(ap.posX, ap.posZ);
-  cx.fillStyle = '#00d2ff';
-  star(q[0], q[1], 5, 11, 5);
-  label((ap.ssid || 'AP') + ' (' + ap.rssi + ' dBm)', q[0], q[1] - 16, '#00d2ff');
+// One AP estimate per BSSID; the AP dropdown filters which are drawn.
+function drawAps() {
+  if (S.apfixAll && S.apfixAll.length) {
+    S.apfixAll.forEach(ap => {
+      if (apSel !== 'all' && ap.bssid !== apSel) return;
+      const q = P(ap.posX, ap.posZ);
+      cx.fillStyle = '#00d2ff';
+      star(q[0], q[1], 5, 11, 5);
+      label((ap.ssid || 'AP') + ' · ' + bandLabel(ap.frequencyMhz || 0) +
+        ' (' + ap.strongestRssi + ' dBm)', q[0], q[1] - 16, '#00d2ff');
+    });
+  } else if (S.apfix) {
+    const q = P(S.apfix.posX, S.apfix.posZ);
+    cx.fillStyle = '#00d2ff';
+    star(q[0], q[1], 5, 11, 5);
+    label((S.apfix.ssid || 'AP') + ' (' + S.apfix.rssi + ' dBm)', q[0], q[1] - 16, '#00d2ff');
+  }
+}
+
+function drawRoam(ev) {
+  const q = P(ev.posX, ev.posZ);
+  cx.fillStyle = '#ff9d3c';
+  cx.beginPath();
+  cx.moveTo(q[0], q[1] - 7);
+  cx.lineTo(q[0] + 7, q[1]);
+  cx.lineTo(q[0], q[1] + 7);
+  cx.lineTo(q[0] - 7, q[1]);
+  cx.closePath();
+  cx.fill();
+  label('Roaming ' + bandLabel(ev.fromFrequencyMhz) + ' → ' +
+    bandLabel(ev.toFrequencyMhz), q[0], q[1] - 12, '#ff9d3c');
 }
 
 function drawPing(p) {
@@ -592,10 +646,12 @@ cv.addEventListener('touchmove', e => {
 
 function updateStats(shown) {
   const last = S.points[S.points.length - 1];
+  // textContent decodes NOTHING — literal umlauts, no HTML entities here.
   statsEl.textContent =
     'Punkte: ' + S.points.length + ' (angezeigt ' + shown + ')\n' +
-    'R&auml;ume: ' + S.rooms.length + '   Pings: ' + S.pings.length + '\n' +
-    'Notizen: ' + S.notes.length +
+    'Räume: ' + S.rooms.length + '   Pings: ' + S.pings.length + '\n' +
+    'Notizen: ' + S.notes.length + '   APs: ' + apsSeen.size +
+    '   Roaming: ' + S.roams.length +
     (last ? '\nLetzte: ' + last.r + ' dBm' : '');
 }
 

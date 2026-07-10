@@ -49,5 +49,14 @@ namespace WifiScanner
         {
             return "timestampMs,posX,posY,posZ,rssiDbm,linkSpeedMbps,frequencyMhz,ssid,bssid,floor";
         }
+
+        /// <summary>Human-readable WiFi band for a channel frequency.</summary>
+        public static string BandLabel(int frequencyMhz)
+        {
+            if (frequencyMhz >= 5925) return "6 GHz";
+            if (frequencyMhz >= 4900) return "5 GHz";
+            if (frequencyMhz >= 2300) return "2,4 GHz";
+            return "?";
+        }
     }
 }

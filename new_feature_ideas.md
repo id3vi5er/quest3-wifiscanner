@@ -127,10 +127,22 @@ Nutzen im Verhältnis zum Aufwand.
 - 18 → `ReportGenerator.cs` (`{stem}_report.html`, self-contained, am Export-Ende)
 - 20 → 3D-Ansicht im Web-Dashboard (Orbit per Drag/Pinch, Etagen-Stapel)
 
-**Zurückgestellt:** 1 (Multi-AP-Scan), 2 (Roaming-Marker), 3 (Band-Tagging),
-4 (Durchsatz-Knoten), 5 (Latenz-Dauermessung), 13 (Panel greifen),
-14 (Sprachdiktat), 15 (Palette-Langdruck), 17 (Minimap pinnen),
-19 (Screenshot-Button).
+**Update (2026-07-10, 2. Runde):** 2 (Roaming-Marker) und 3 (Band-Tagging) sind
+UMGESETZT (M26) — erweitert um BSSID-getrennte Heatmaps: jede BSSID bekommt ihre
+eigene Heatmap (Samples tragen die BSSID, das Punkt-Folding mittelt nicht mehr
+über AP-Wechsel hinweg), Panel-Cycle „AP: Alle → einzelne BSSIDs“ (Alle =
+Parallel-Ansicht).
+**GESTRICHEN auf Nutzerwunsch:** 14 (Sprachdiktat — uninteressant),
+17 (Minimap pinnen — bräuchte zweiten VR-Client + Sync),
+19 (Screenshot-Button — macht die Quest systemseitig).
+**NEU statt 14:** **Foto-Notiz** — an eine räumliche Notiz ein Foto anhängen.
+Achtung Technik: App-Screenshots enthalten KEIN Passthrough (das Kamerabild
+komponiert das OS außerhalb des Eye-Buffers); echte Fotos brauchen die Meta
+Passthrough Camera API (experimentell, eigene Permission, HorizonOS v74+).
+
+**Zurückgestellt:** 1 (Multi-AP-Scan), 4 (Durchsatz-Knoten),
+5 (Latenz-Dauermessung), 13 (Panel greifen), 15 (Palette-Langdruck),
+Foto-Notiz (neu).
 
 ## A) Messung & Analyse
 

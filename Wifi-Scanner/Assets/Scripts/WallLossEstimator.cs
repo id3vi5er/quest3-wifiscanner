@@ -114,6 +114,9 @@ namespace WifiScanner
             Vector3 ap = apLocator.FixPosition;
             float n = apLocator.PathLossExponent;
             Vector2 apXZ = new Vector2(ap.x, ap.z);
+            // Model and samples must belong to the SAME access point —
+            // foreign-BSSID samples (after roaming) would skew the estimate.
+            string apBssid = apLocator.ActiveBssid;
 
             for (int r = 0; r < rooms.Count; r++)
             {
@@ -137,6 +140,7 @@ namespace WifiScanner
                     for (int i = 0; i < samples.Count; i++)
                     {
                         var s = samples[i];
+                        if (apBssid.Length > 0 && s.bssid != apBssid) continue;
                         if (s.posY < room.floorY - 0.3f || s.posY > roomTop + 0.3f)
                             continue;
                         float dx = s.posX - a.x;

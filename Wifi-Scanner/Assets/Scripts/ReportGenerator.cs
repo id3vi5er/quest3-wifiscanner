@@ -85,21 +85,52 @@ namespace WifiScanner
                 }
             }
 
-            // ---- AP fix ----
+            // ---- AP fixes (one estimate per BSSID) ----
             var ap = collector.apLocator;
-            if (ap != null && ap.HasFix)
+            if (ap != null && ap.Estimates.Count > 0)
             {
-                sb.AppendLine("<h2>Access Point (geschätzt)</h2><table>");
-                sb.AppendLine("<tr><th>SSID</th><th>Position (x/y/z, m)</th>" +
+                sb.AppendLine("<h2>Access Points (geschätzt)</h2><table>");
+                sb.AppendLine("<tr><th>#</th><th>SSID</th><th>BSSID</th>" +
+                              "<th>Band</th><th>Position (x/y/z, m)</th>" +
                               "<th>stärkster RSSI</th><th>Unsicherheit</th>" +
                               "<th>Pfadverlust n</th><th>P<sub>1m</sub></th></tr>");
-                sb.Append("<tr><td>").Append(Esc(ap.FixSsid))
-                  .Append("</td><td>").Append(Fmt(ap.FixPosition))
-                  .Append("</td><td>").Append(ap.FixRssi).Append(" dBm")
-                  .Append("</td><td>").Append(ap.HasFit ? $"±{ap.FixRadius:F1} m" : "– (nur Schwerpunkt)")
-                  .Append("</td><td>").Append(ap.HasFit ? ap.PathLossExponent.ToString("F2") : "–")
-                  .Append("</td><td>").Append(ap.HasFit ? $"{ap.PowerAt1mDbm:F1} dBm" : "–")
-                  .AppendLine("</td></tr></table>");
+                int apIndex = 1;
+                foreach (var est in ap.Estimates)
+                    sb.Append("<tr><td>").Append(apIndex++)
+                      .Append("</td><td>").Append(Esc(est.ssid))
+                      .Append("</td><td>").Append(Esc(est.bssid))
+                      .Append("</td><td>").Append(Sample.BandLabel(est.frequencyMhz))
+                      .Append("</td><td>").Append(Fmt(est.Position))
+                      .Append("</td><td>").Append(est.strongestRssi).Append(" dBm")
+                      .Append("</td><td>").Append(est.hasFit
+                          ? $"±{est.radius:F1} m" : "– (nur Schwerpunkt)")
+                      .Append("</td><td>").Append(est.hasFit
+                          ? est.pathLossN.ToString("F2") : "–")
+                      .Append("</td><td>").Append(est.hasFit
+                          ? $"{est.powerAt1m:F1} dBm" : "–")
+                      .AppendLine("</td></tr>");
+                sb.AppendLine("</table>");
+            }
+
+            // ---- Roaming events ----
+            var roaming = collector.roaming;
+            if (roaming != null && roaming.Events.Count > 0)
+            {
+                sb.AppendLine("<h2>Roaming-Ereignisse</h2><table>");
+                sb.AppendLine("<tr><th>#</th><th>Von</th><th>Nach</th>" +
+                              "<th>Band</th><th>Position (m)</th></tr>");
+                int i = 1;
+                foreach (var ev in roaming.Events)
+                    sb.Append("<tr><td>").Append(i++)
+                      .Append("</td><td>").Append(Esc(ev.fromBssid))
+                      .Append("</td><td>").Append(Esc(ev.toBssid))
+                      .Append("</td><td>")
+                      .Append(Sample.BandLabel(ev.fromFrequencyMhz)).Append(" → ")
+                      .Append(Sample.BandLabel(ev.toFrequencyMhz))
+                      .Append("</td><td>")
+                      .Append(Fmt(new Vector3(ev.posX, ev.posY, ev.posZ)))
+                      .AppendLine("</td></tr>");
+                sb.AppendLine("</table>");
             }
 
             // ---- Wall attenuations ----
@@ -226,6 +257,17 @@ namespace WifiScanner
                 string p = Path.Combine(dir, $"{stem}_heatmap.png");
                 if (File.Exists(p)) files.Add((p, "Boden-Heatmap"));
             }
+            // Per-AP maps (only written when several BSSIDs were measured).
+            var bssids = collector.KnownBssids;
+            if (bssids.Count > 1)
+                for (int i = 0; i < bssids.Count; i++)
+                {
+                    string band = Sample.BandLabel(bssids[i].frequencyMhz);
+                    string p = Path.Combine(dir,
+                        $"{stem}_heatmap_AP{i + 1}_{band.Replace(",", "_").Replace(" ", "")}.png");
+                    if (File.Exists(p))
+                        files.Add((p, $"AP {i + 1} · {band} ({bssids[i].bssid})"));
+                }
             if (files.Count == 0) return;
 
             sb.AppendLine("<h2>Heatmaps</h2>");

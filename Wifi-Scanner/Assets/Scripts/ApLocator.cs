@@ -59,19 +59,61 @@ namespace WifiScanner
         /// <summary>Fitted power at 1 m distance (dBm).</summary>
         public float PowerAt1mDbm { get; private set; } = -40f;
 
+        /// <summary>One AP estimate (per BSSID). The single-AP properties above
+        /// always mirror the ACTIVE estimate (selected per-AP heatmap, else the
+        /// AP with the most samples) so wall-loss/coverage consumers keep
+        /// working unchanged.</summary>
+        [Serializable]
+        public class ApEstimate
+        {
+            public string bssid = "";
+            public string ssid = "";
+            public int frequencyMhz;
+            public int strongestRssi = -127;
+            public float posX, posY, posZ;
+            public bool hasFit;
+            public float radius;
+            public float pathLossN = 2.7f;
+            public float powerAt1m = -40f;
+            public int sampleCount;
+
+            public Vector3 Position => new Vector3(posX, posY, posZ);
+        }
+
+        /// <summary>All per-BSSID estimates (first-seen order).</summary>
+        public System.Collections.Generic.IReadOnlyList<ApEstimate> Estimates => _estimates;
+
+        /// <summary>BSSID of the ACTIVE estimate ("" while none) — consumers
+        /// that mix model and samples (wall loss) filter their samples to it.</summary>
+        public string ActiveBssid { get; private set; } = "";
+
+        /// <summary>Current per-AP display filter ("" = all APs) — the minimap
+        /// mirrors it for its AP markers.</summary>
+        public string BssidFilter => _bssidFilter;
+
+        // Per-estimate visuals (icon + label + uncertainty ring).
+        private class Visual
+        {
+            public Transform icon;
+            public WorldLabel label;
+            public LineRenderer ring;
+            public Vector3 velocity;
+            public bool hasTarget;
+        }
+
+        private readonly System.Collections.Generic.List<ApEstimate> _estimates =
+            new System.Collections.Generic.List<ApEstimate>();
+        private readonly System.Collections.Generic.Dictionary<string, Visual> _visuals =
+            new System.Collections.Generic.Dictionary<string, Visual>();
+        private string _bssidFilter = ""; // "" = alle APs sichtbar
+
         private GameObject _root;
-        private Transform _icon;
-        private WorldLabel _label;
         private Material _iconMat;
         private Mesh _quadMesh;
-        private LineRenderer _ring;
 
         private int _lastRevision = -1;
         private float _refitTimer;
         private bool _dirty;
-        private Vector3 _target;
-        private Vector3 _velocity;
-        private bool _hasTarget;
         private float _resendTimer;
 
         private static readonly Vector2[] SearchDirs =
@@ -85,13 +127,19 @@ namespace WifiScanner
         private class ApFixPacket
         {
             public string type = "apfix";
+            // Legacy single-AP fields = the ACTIVE estimate (receiver.py).
             public float posX, posY, posZ;
             public string ssid;
+            public string bssid;
             public int rssi;
             public float radius;       // uncertainty (m); 0 = centroid only
             public float pathLossN;    // fitted exponent
             public float powerAt1m;    // fitted P1m (dBm)
+            // All per-BSSID estimates (dashboard draws these).
+            public System.Collections.Generic.List<ApEstimate> aps;
         }
+
+        private Material _ringMat;
 
         private void Start()
         {
@@ -106,6 +154,8 @@ namespace WifiScanner
             {
                 _iconMat = new Material(visualMaterial); // asset clone keeps its variant
                 MakeIconMaterial(_iconMat, CreateRouterTexture());
+                _ringMat = new Material(visualMaterial);
+                _ringMat.SetColor("_BaseColor", new Color(0f, 0.86f, 1f, 0.55f));
             }
             else
             {
@@ -113,6 +163,13 @@ namespace WifiScanner
                                "point material in SceneBootstrap.");
             }
 
+            _root.SetActive(visibleAtStart);
+        }
+
+        // Icon + label + uncertainty ring for ONE estimate (per BSSID).
+        private Visual CreateVisual()
+        {
+            var v = new Visual();
             var iconGo = new GameObject("RouterIcon");
             iconGo.transform.SetParent(_root.transform, false);
             iconGo.transform.localScale = Vector3.one * iconSize;
@@ -123,28 +180,32 @@ namespace WifiScanner
             mr.receiveShadows = false;
             mr.lightProbeUsage = LightProbeUsage.Off;
             mr.reflectionProbeUsage = ReflectionProbeUsage.Off;
-            _icon = iconGo.transform;
+            v.icon = iconGo.transform;
 
-            _label = WorldLabel.Create(_root.transform);
+            v.label = WorldLabel.Create(_root.transform);
 
-            // Uncertainty ring (horizontal circle around the icon).
             var ringGo = new GameObject("UncertaintyRing");
             ringGo.transform.SetParent(_root.transform, false);
-            _ring = ringGo.AddComponent<LineRenderer>();
-            _ring.positionCount = RingSegments + 1;
-            _ring.startWidth = _ring.endWidth = 0.012f;
-            _ring.loop = false;
-            _ring.shadowCastingMode = ShadowCastingMode.Off;
-            _ring.receiveShadows = false;
-            if (visualMaterial != null)
-            {
-                var ringMat = new Material(visualMaterial); // asset clone
-                ringMat.SetColor("_BaseColor", new Color(0f, 0.86f, 1f, 0.55f));
-                _ring.sharedMaterial = ringMat;
-            }
-            _ring.enabled = false;
+            v.ring = ringGo.AddComponent<LineRenderer>();
+            v.ring.positionCount = RingSegments + 1;
+            v.ring.startWidth = v.ring.endWidth = 0.012f;
+            v.ring.loop = false;
+            v.ring.shadowCastingMode = ShadowCastingMode.Off;
+            v.ring.receiveShadows = false;
+            if (_ringMat != null) v.ring.sharedMaterial = _ringMat;
+            v.ring.enabled = false;
+            return v;
+        }
 
-            _root.SetActive(visibleAtStart);
+        private static void SetVisualShown(Visual v, bool shown)
+        {
+            if (v.icon != null && v.icon.gameObject.activeSelf != shown)
+                v.icon.gameObject.SetActive(shown);
+            if (!shown)
+            {
+                v.label?.SetVisible(false);
+                if (v.ring != null) v.ring.enabled = false;
+            }
         }
 
         // ---- Panel control ----
@@ -154,6 +215,16 @@ namespace WifiScanner
         public void SetVisible(bool visible)
         {
             if (_root != null) _root.SetActive(visible);
+        }
+
+        /// <summary>Restricts the visible icons to one AP (the selected per-AP
+        /// heatmap). "" or null = all APs. The single-AP properties re-map to
+        /// the selection so wall-loss/coverage follow the active heatmap.</summary>
+        public void SetBssidFilter(string bssid)
+        {
+            _bssidFilter = bssid ?? "";
+            UpdateActive();
+            if (HasFix) SendApUpdate();
         }
 
         private void Update()
@@ -184,42 +255,90 @@ namespace WifiScanner
 
             if (_root == null || !_root.activeSelf) return;
 
-            if (_hasTarget)
+            // Glide every (visible) estimate's icon toward its target.
+            foreach (var est in _estimates)
             {
-                Vector3 pos = _icon != null ? _icon.position : _target;
-                pos = Vector3.SmoothDamp(pos, _target, ref _velocity, smoothTime);
-                if (_icon != null)
-                {
-                    _icon.position = pos;
-                    BillboardIcon();
-                }
-                UpdateRing(pos);
-                _label.SetWorldPosition(pos + Vector3.up * (iconSize * 0.75f));
-                string unc = HasFit ? $"\n±{FixRadius:F1} m" : "";
-                _label.SetText(HasFix
-                    ? $"{(string.IsNullOrEmpty(FixSsid) ? "AP" : FixSsid)}\n~{FixRssi} dBm{unc}"
-                    : "AP: (zu wenig Daten)");
+                if (!_visuals.TryGetValue(est.bssid, out var v)) continue;
+                bool shown = _bssidFilter.Length == 0 || est.bssid == _bssidFilter;
+                SetVisualShown(v, shown);
+                if (!shown) continue;
+
+                Vector3 target = est.Position + Vector3.up * heightOffset;
+                Vector3 pos = v.hasTarget ? v.icon.position : target;
+                pos = Vector3.SmoothDamp(pos, target, ref v.velocity, smoothTime);
+                v.hasTarget = true;
+                v.icon.position = pos;
+                Billboard(v.icon);
+                UpdateRing(v.ring, pos, est);
+                v.label.SetVisible(true);
+                v.label.SetWorldPosition(pos + Vector3.up * (iconSize * 0.75f));
+                string unc = est.hasFit ? $"\n±{est.radius:F1} m" : "";
+                string band = Sample.BandLabel(est.frequencyMhz);
+                v.label.SetText(
+                    $"{(string.IsNullOrEmpty(est.ssid) ? "AP" : est.ssid)} · {band}\n" +
+                    $"~{est.strongestRssi} dBm{unc}");
             }
-            _label.SetVisible(_hasTarget && HasFix);
-            if (_ring != null) _ring.enabled = _hasTarget && HasFit;
         }
 
         private void Recompute()
         {
+            // Group the samples per access point (BSSID) — every AP gets its
+            // own estimate, matching the per-AP heatmaps.
             var samples = collector.Samples;
-            if (samples.Count < minSamples)
+            var groups = new System.Collections.Generic.Dictionary<string,
+                System.Collections.Generic.List<Sample>>();
+            for (int i = 0; i < samples.Count; i++)
             {
-                HasFix = false;
-                HasFit = false;
-                _hasTarget = false;
-                return;
+                var s = samples[i];
+                if (string.IsNullOrEmpty(s.bssid)) continue;
+                if (!groups.TryGetValue(s.bssid, out var list))
+                    groups[s.bssid] = list = new System.Collections.Generic.List<Sample>();
+                list.Add(s);
             }
 
-            // --- Stage 1: weighted centroid (linear power) as initial guess ---
+            // Drop estimates whose AP vanished (session load/clear).
+            for (int i = _estimates.Count - 1; i >= 0; i--)
+            {
+                string key = _estimates[i].bssid;
+                if (groups.TryGetValue(key, out var list) && list.Count >= minSamples)
+                    continue;
+                if (_visuals.TryGetValue(key, out var v))
+                {
+                    if (v.icon != null) Destroy(v.icon.gameObject);
+                    if (v.label != null) Destroy(v.label.gameObject);
+                    if (v.ring != null) Destroy(v.ring.gameObject);
+                    _visuals.Remove(key);
+                }
+                _estimates.RemoveAt(i);
+            }
+
+            foreach (var kv in groups)
+            {
+                if (kv.Value.Count < minSamples) continue;
+                var est = _estimates.Find(e => e.bssid == kv.Key);
+                if (est == null)
+                {
+                    est = new ApEstimate { bssid = kv.Key };
+                    _estimates.Add(est);
+                }
+                FitGroup(kv.Value, est);
+                if (!_visuals.ContainsKey(kv.Key))
+                    _visuals[kv.Key] = CreateVisual();
+            }
+
+            UpdateActive();
+            if (HasFix) SendApUpdate();
+        }
+
+        // Two-stage fit for ONE AP's samples (centroid init + pattern search).
+        private static void FitGroup(System.Collections.Generic.List<Sample> samples,
+            ApEstimate est)
+        {
             Vector3 num = Vector3.zero;
             double den = 0.0;
             int strongest = -127;
             string strongestSsid = "";
+            int frequency = 0;
             for (int i = 0; i < samples.Count; i++)
             {
                 var s = samples[i];
@@ -231,11 +350,15 @@ namespace WifiScanner
                     strongest = s.rssiDbm;
                     strongestSsid = s.ssid;
                 }
+                if (s.frequencyMhz > 0) frequency = s.frequencyMhz;
             }
-            if (den <= 0.0) { HasFix = false; _hasTarget = false; return; }
+            est.sampleCount = samples.Count;
+            est.strongestRssi = strongest;
+            est.ssid = strongestSsid;
+            est.frequencyMhz = frequency;
+            if (den <= 0.0) return;
             Vector3 centroid = num / (float)den;
 
-            // --- Stage 2: XZ pattern search minimising the path-loss SSE ---
             var apXZ = new Vector2(centroid.x, centroid.z);
             float apY = centroid.y;
             float cost = FitCost(samples, apXZ, apY, out float n, out float p1);
@@ -257,35 +380,54 @@ namespace WifiScanner
                     else step *= 0.6f;
                 }
                 cost = FitCost(samples, apXZ, apY, out n, out p1);
-            }
 
-            if (fitOk)
-            {
-                FixPosition = new Vector3(apXZ.x, apY, apXZ.y);
-                PathLossExponent = n;
-                PowerAt1mDbm = p1;
+                var pos = new Vector3(apXZ.x, apY, apXZ.y);
+                est.posX = pos.x; est.posY = pos.y; est.posZ = pos.z;
+                est.pathLossN = n;
+                est.powerAt1m = p1;
                 // Residual (dB) -> distance uncertainty at the typical range:
                 // d ~ 10^((P1-r)/(10n)), so sigma_dB maps to the factor
                 // 10^(sigma/(10n)). Radius = mean distance * (factor - 1).
                 float sigma = Mathf.Sqrt(cost / samples.Count);
-                float meanD = MeanDistance(samples, FixPosition);
+                float meanD = MeanDistance(samples, pos);
                 float factor = Mathf.Pow(10f, sigma / (10f * n));
-                FixRadius = Mathf.Clamp(meanD * (factor - 1f), 0.3f, 8f);
-                HasFit = true;
+                est.radius = Mathf.Clamp(meanD * (factor - 1f), 0.3f, 8f);
+                est.hasFit = true;
             }
             else
             {
-                FixPosition = centroid; // degenerate data: centroid only
-                HasFit = false;
+                est.posX = centroid.x; est.posY = centroid.y; est.posZ = centroid.z;
+                est.hasFit = false; // degenerate data: centroid only
             }
+        }
 
-            FixSsid = strongestSsid;
-            FixRssi = strongest;
-            _target = FixPosition + Vector3.up * heightOffset;
-            if (!_hasTarget && _icon != null) _icon.position = _target; // snap first time
-            _hasTarget = true;
+        // Maps the single-AP properties to the ACTIVE estimate: the filtered
+        // AP when a per-AP heatmap is selected, else the one with most samples.
+        private void UpdateActive()
+        {
+            ApEstimate active = null;
+            if (_bssidFilter.Length > 0)
+                active = _estimates.Find(e => e.bssid == _bssidFilter);
+            if (active == null)
+                foreach (var e in _estimates)
+                    if (active == null || e.sampleCount > active.sampleCount)
+                        active = e;
+            if (active == null)
+            {
+                HasFix = false;
+                HasFit = false;
+                ActiveBssid = "";
+                return;
+            }
             HasFix = true;
-            SendApUpdate();
+            ActiveBssid = active.bssid;
+            FixPosition = active.Position;
+            FixSsid = active.ssid;
+            FixRssi = active.strongestRssi;
+            HasFit = active.hasFit;
+            FixRadius = active.radius;
+            PathLossExponent = active.pathLossN;
+            PowerAt1mDbm = active.powerAt1m;
         }
 
         /// <summary>
@@ -343,25 +485,28 @@ namespace WifiScanner
             return (float)(sum / Mathf.Max(1, samples.Count));
         }
 
-        // Horizontal circle of FixRadius around the (smoothed) icon position.
-        private void UpdateRing(Vector3 center)
+        // Horizontal uncertainty circle around one estimate's icon.
+        private static void UpdateRing(LineRenderer ring, Vector3 center,
+            ApEstimate est)
         {
-            if (_ring == null || !HasFit) return;
+            if (ring == null) return;
+            ring.enabled = est.hasFit;
+            if (!est.hasFit) return;
             for (int i = 0; i <= RingSegments; i++)
             {
                 float a = i / (float)RingSegments * Mathf.PI * 2f;
-                _ring.SetPosition(i, center + new Vector3(
-                    Mathf.Cos(a) * FixRadius, 0f, Mathf.Sin(a) * FixRadius));
+                ring.SetPosition(i, center + new Vector3(
+                    Mathf.Cos(a) * est.radius, 0f, Mathf.Sin(a) * est.radius));
             }
         }
 
-        private void BillboardIcon()
+        private static void Billboard(Transform icon)
         {
             var cam = Camera.main;
-            if (cam == null || _icon == null) return;
-            Vector3 dir = _icon.position - cam.transform.position;
+            if (cam == null || icon == null) return;
+            Vector3 dir = icon.position - cam.transform.position;
             if (dir.sqrMagnitude > 1e-6f)
-                _icon.rotation = Quaternion.LookRotation(dir, Vector3.up);
+                icon.rotation = Quaternion.LookRotation(dir, Vector3.up);
         }
 
         // ---- Streaming ----
@@ -376,10 +521,12 @@ namespace WifiScanner
                 posY = FixPosition.y,
                 posZ = FixPosition.z,
                 ssid = FixSsid,
+                bssid = _bssidFilter,
                 rssi = FixRssi,
                 radius = HasFit ? FixRadius : 0f,
                 pathLossN = PathLossExponent,
                 powerAt1m = PowerAt1mDbm,
+                aps = _estimates,
             };
             streamer.SendRaw(JsonUtility.ToJson(p));
         }

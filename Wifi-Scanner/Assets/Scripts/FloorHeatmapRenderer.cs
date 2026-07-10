@@ -94,6 +94,8 @@ namespace WifiScanner
         // Diff view: loaded reference scan + its field on the current grid.
         private System.Collections.Generic.List<Sample> _diffSamples;
         private float[] _refCellRssi;
+        // Per-AP view: only samples of this BSSID ("" = all APs in parallel).
+        private string _bssidFilter = "";
 
         private static readonly int BaseMapId = Shader.PropertyToID("_BaseMap");
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
@@ -282,6 +284,21 @@ namespace WifiScanner
             Colorize();
         }
 
+        /// <summary>Currently selected AP ("" = all BSSIDs in parallel).</summary>
+        public string BssidFilter => _bssidFilter;
+
+        /// <summary>
+        /// Restricts the heatmap to ONE access point's samples (its own map —
+        /// samples are BSSID-tagged, so every AP has a clean separate field).
+        /// "" or null shows all APs in parallel. Triggers a rebuild.
+        /// </summary>
+        public void SetBssidFilter(string bssid)
+        {
+            _bssidFilter = bssid ?? "";
+            _lastRevision = -1; // force a rebuild
+            _timer = updateInterval;
+        }
+
         /// <summary>True while the diff view (current − reference) is showing.</summary>
         public bool DiffEnabled => _diffSamples != null;
         /// <summary>Stem of the loaded diff reference ("" when disabled).</summary>
@@ -323,7 +340,8 @@ namespace WifiScanner
             // contrast, always uses ALL samples across every floor.)
             var result = new FieldResult();
             var pass = ComputeField(collector.Samples, floorManager != null,
-                floorManager != null ? floorManager.ActiveIndex : 0, result);
+                floorManager != null ? floorManager.ActiveIndex : 0, result,
+                _bssidFilter);
             while (pass.MoveNext()) yield return pass.Current;
 
             // No measurements on the active storey → nothing to draw.
@@ -350,7 +368,7 @@ namespace WifiScanner
                 var refPass = RasterizeSamplesOnGrid(_diffSamples,
                     floorManager != null,
                     floorManager != null ? floorManager.ActiveIndex : 0,
-                    _worldMin, _worldCell, _texW, _texH, refCell);
+                    _worldMin, _worldCell, _texW, _texH, refCell, _bssidFilter);
                 while (refPass.MoveNext()) yield return refPass.Current;
                 _refCellRssi = refCell;
             }
@@ -391,9 +409,11 @@ namespace WifiScanner
         // parameter so the diff view can rasterise a LOADED reference scan.
         private IEnumerator ComputeField(
             System.Collections.Generic.IReadOnlyList<Sample> samples,
-            bool filterFloor, int floorFilter, FieldResult result)
+            bool filterFloor, int floorFilter, FieldResult result,
+            string bssidFilter = null)
         {
             // --- Snapshot the samples (the list only grows / updates in place) ---
+            bool filterBssid = !string.IsNullOrEmpty(bssidFilter);
             int total = samples.Count;
             var px = new float[total];
             var pz = new float[total];
@@ -410,6 +430,7 @@ namespace WifiScanner
             {
                 var s = samples[i];
                 if (filterFloor && s.floor != floorFilter) continue;
+                if (filterBssid && s.bssid != bssidFilter) continue;
                 Vector3 g = worldToGrid * new Vector3(s.posX, 0f, s.posZ);
                 px[n] = g.x;
                 pz[n] = g.z;
@@ -521,8 +542,9 @@ namespace WifiScanner
         private IEnumerator RasterizeSamplesOnGrid(
             System.Collections.Generic.IReadOnlyList<Sample> samples,
             bool filterFloor, int floorFilter, Vector2 worldMin, float worldCell,
-            int texW, int texH, float[] cellRssi)
+            int texW, int texH, float[] cellRssi, string bssidFilter = null)
         {
+            bool filterBssid = !string.IsNullOrEmpty(bssidFilter);
             int total = samples.Count;
             var px = new float[total];
             var pz = new float[total];
@@ -533,6 +555,7 @@ namespace WifiScanner
             {
                 var s = samples[i];
                 if (filterFloor && s.floor != floorFilter) continue;
+                if (filterBssid && s.bssid != bssidFilter) continue;
                 Vector3 g = worldToGrid * new Vector3(s.posX, 0f, s.posZ);
                 px[n] = g.x;
                 pz[n] = g.z;
@@ -710,7 +733,8 @@ namespace WifiScanner
                 _floorY, activeLabel);
 
             // Multi-storey: one PNG + JSON per storey with data, computed
-            // offline with that storey's filter (synchronous drain).
+            // offline with that storey's filter (synchronous drain). Exports
+            // are deliberately UNfiltered by BSSID (full record per storey).
             if (multiStorey)
             {
                 for (int i = 0; i < floorManager.Floors.Count; i++)
@@ -725,6 +749,29 @@ namespace WifiScanner
                     WriteHeatmapFiles(stem, "_" + floorLevel.label, floorPng,
                         result.worldMin, result.cell, result.w, result.h,
                         floorLevel.baseY + floorOffset, floorLevel.label);
+                }
+            }
+
+            // Multi-AP: one PNG + JSON per access point (BSSID) on the ACTIVE
+            // storey — each AP has its own clean heatmap since roaming.
+            var bssids = collector.KnownBssids;
+            if (bssids.Count > 1)
+            {
+                int activeFloor = floorManager != null ? floorManager.ActiveIndex : 0;
+                for (int i = 0; i < bssids.Count; i++)
+                {
+                    var result = new FieldResult();
+                    var pass = ComputeField(collector.Samples,
+                        floorManager != null, activeFloor, result, bssids[i].bssid);
+                    while (pass.MoveNext()) { }
+                    if (!result.ok) continue;
+
+                    byte[] apPng = EncodeField(result.cellRssi, result.w, result.h);
+                    string band = Sample.BandLabel(bssids[i].frequencyMhz)
+                        .Replace(",", "_").Replace(" ", "");
+                    WriteHeatmapFiles(stem, $"_AP{i + 1}_{band}", apPng,
+                        result.worldMin, result.cell, result.w, result.h,
+                        _floorY, $"AP {i + 1} ({bssids[i].bssid})");
                 }
             }
             return png;

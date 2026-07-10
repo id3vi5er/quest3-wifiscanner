@@ -28,7 +28,7 @@ namespace WifiScanner
         private static readonly string[] SidecarSuffixes =
         {
             "_rooms", "_drill", "_apfix", "_ping", "_notes", "_measure",
-            "_heatmap", "_walls", "_report", "_coverage",
+            "_heatmap", "_walls", "_report", "_coverage", "_roam",
         };
 
         /// <summary>
@@ -464,23 +464,32 @@ namespace WifiScanner
         [Serializable]
         private class ApFixJson
         {
+            // Legacy single-AP fields = the ACTIVE estimate.
             public float posX, posY, posZ;
             public string ssid;
             public int rssi;
             public float radius;    // position uncertainty (m); 0 = centroid only
             public float pathLossN; // fitted path-loss exponent
             public float powerAt1m; // fitted P1m (dBm)
+            // All per-BSSID estimates (multi-AP since roaming support).
+            public List<ApLocator.ApEstimate> aps;
         }
 
-        /// <summary>Estimated access-point position (path-loss fit) as JSON.</summary>
+        /// <summary>Estimated access-point position(s) as JSON: the active
+        /// estimate in the legacy top-level fields plus every per-BSSID
+        /// estimate in <c>aps</c>.</summary>
         public static string ExportApFixJson(Vector3 pos, string ssid, int rssi,
-            string stem, float radius = 0f, float pathLossN = 0f, float powerAt1m = 0f)
+            string stem, float radius = 0f, float pathLossN = 0f, float powerAt1m = 0f,
+            IReadOnlyList<ApLocator.ApEstimate> allEstimates = null)
         {
             var wrapper = new ApFixJson
             {
                 posX = pos.x, posY = pos.y, posZ = pos.z,
                 ssid = ssid, rssi = rssi,
                 radius = radius, pathLossN = pathLossN, powerAt1m = powerAt1m,
+                aps = allEstimates != null
+                    ? new List<ApLocator.ApEstimate>(allEstimates)
+                    : null,
             };
             string path = Path.Combine(Application.persistentDataPath,
                 $"{stem}_apfix.json");
@@ -588,6 +597,23 @@ namespace WifiScanner
                 $"{stem}_ping.json");
             File.WriteAllText(path, JsonUtility.ToJson(wrapper, true));
             Debug.Log($"[DataExporter] Wrote {nodes.Count} ping node(s) to {path}");
+            return path;
+        }
+
+        [Serializable]
+        private class RoamList
+        {
+            public List<RoamEvent> events;
+        }
+
+        /// <summary>Roaming events (position + BSSID/band change) as JSON.</summary>
+        public static string ExportRoamJson(IReadOnlyList<RoamEvent> events, string stem)
+        {
+            var wrapper = new RoamList { events = new List<RoamEvent>(events) };
+            string path = Path.Combine(Application.persistentDataPath,
+                $"{stem}_roam.json");
+            File.WriteAllText(path, JsonUtility.ToJson(wrapper, true));
+            Debug.Log($"[DataExporter] Wrote {events.Count} roaming event(s) to {path}");
             return path;
         }
 

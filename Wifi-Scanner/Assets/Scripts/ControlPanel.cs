@@ -42,6 +42,7 @@ namespace WifiScanner
         public WallLossEstimator wallLoss;
         public CoverageSimulator coverage;
         public OnboardingGuide onboarding;
+        public RoamingTracker roaming;
         public NetworkStreamer streamer;
         public int streamPort = 9999;
 
@@ -74,6 +75,11 @@ namespace WifiScanner
         private TextMeshProUGUI _audioLabel;
         private TextMeshProUGUI _wallLossLabel;
         private TextMeshProUGUI _coverageLabel;
+        private TextMeshProUGUI _bssidLabel;
+        private TextMeshProUGUI _roamLabel;
+        private int _bssidIndex = -1; // -1 = alle APs (Parallel-Ansicht)
+        private GameObject _floorListGo; // Etagen-Dropdown (aufklappbare Liste)
+        private int _floorListVersion = -1;
         private TextMeshProUGUI _wipeLabel;
         private float _wipeArmedUntil;
         private float _wipeInfoUntil;
@@ -350,9 +356,68 @@ namespace WifiScanner
 
         private void OnOpeningRemoveClicked() => roomTracer?.RemoveLastOpening();
 
-        private void OnFloorCycleClicked() => floorManager?.CycleView();
-
         private void OnFloorCreateClicked() => floorManager?.CreateFloorAtHead();
+
+        private void OnFloorAboveClicked() => floorManager?.CreateFloorAbove();
+
+        private void OnFloorBelowClicked() => floorManager?.CreateFloorBelow();
+
+        // Re-designates the storey labels (e.g. starting floor = OG2).
+        private void OnLabelShiftUpClicked() => floorManager?.ShiftLabels(1);
+
+        private void OnLabelShiftDownClicked() => floorManager?.ShiftLabels(-1);
+
+        private void OnFloorDropdownClicked()
+        {
+            if (_floorListGo == null) return;
+            bool show = !_floorListGo.activeSelf;
+            if (show) RebuildFloorList();
+            _floorListGo.SetActive(show);
+        }
+
+        // One button per storey (top first) + "Alle"; selecting collapses.
+        private void RebuildFloorList()
+        {
+            if (_floorListGo == null || floorManager == null) return;
+            _floorListVersion = floorManager.Version;
+            foreach (Transform child in _floorListGo.transform)
+                Destroy(child.gameObject);
+
+            AddFloorEntry("Alle Etagen", floorManager.ShowAll, () =>
+            {
+                floorManager.ShowAllFloors();
+                _floorListGo.SetActive(false);
+            });
+            var floors = floorManager.Floors;
+            for (int i = floors.Count - 1; i >= 0; i--)
+            {
+                int index = i;
+                bool active = !floorManager.ShowAll &&
+                              floorManager.ActiveIndex == index;
+                AddFloorEntry($"{floors[i].label}   ({floors[i].baseY:F1} m)",
+                    active, () =>
+                    {
+                        floorManager.SelectFloor(index);
+                        _floorListGo.SetActive(false);
+                    });
+            }
+        }
+
+        private void AddFloorEntry(string text, bool active,
+            UnityEngine.Events.UnityAction onClick)
+        {
+            var go = new GameObject("FloorEntry", typeof(RectTransform));
+            go.transform.SetParent(_floorListGo.transform, false);
+            go.AddComponent<LayoutElement>().preferredHeight = 44f;
+            var img = go.AddComponent<Image>();
+            img.color = active ? UiBuilder.ActiveColor : UiBuilder.ButtonColor;
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(onClick);
+            var label = UiBuilder.AddText(go.transform, text, 20f,
+                FontStyles.Normal, TextAlignmentOptions.Center);
+            UiBuilder.Stretch(label.rectTransform);
+        }
 
         private void OnWebDashboardClicked()
         {
@@ -368,6 +433,20 @@ namespace WifiScanner
         private void OnWallLossClicked() => wallLoss?.Toggle();
 
         private void OnCoverageClicked() => coverage?.Toggle();
+
+        // Cycles the per-AP heatmap: Alle (parallel) → AP1 → AP2 → … → Alle.
+        // Heatmap AND AP-locator icons follow the same selection.
+        private void OnBssidCycleClicked()
+        {
+            if (collector == null || floor == null) return;
+            var bssids = collector.KnownBssids;
+            _bssidIndex = _bssidIndex + 1 >= bssids.Count ? -1 : _bssidIndex + 1;
+            string filter = _bssidIndex >= 0 ? bssids[_bssidIndex].bssid : "";
+            floor.SetBssidFilter(filter);
+            apLocator?.SetBssidFilter(filter);
+        }
+
+        private void OnRoamingClicked() => roaming?.Toggle();
 
         // Data-clear actions for the palette tools (the tool TOGGLES live on
         // the left-wrist ToolPalette, only their data actions stay here).
@@ -483,11 +562,15 @@ namespace WifiScanner
                         ? $"Grid ausrichten ({floor.gridYawDegrees:F0}°)"
                         : "Grid ausrichten");
             if (_floorLabel != null && floorManager != null)
-                _floorLabel.text = $"Etage: {floorManager.CurrentLabel}";
+                _floorLabel.text = $"Etage: {floorManager.CurrentLabel} ▾";
             if (_floorCreateLabel != null && floorManager != null)
                 _floorCreateLabel.text = floorManager.NewFloorSuggested
                     ? "<color=#7CFC7C>Neue Etage!</color>"
                     : "Etage anlegen";
+            // Open dropdown follows floor changes (creation, auto-switch).
+            if (_floorListGo != null && _floorListGo.activeSelf &&
+                floorManager != null && floorManager.Version != _floorListVersion)
+                RebuildFloorList();
             if (_webLabel != null && webServer != null)
                 _webLabel.text = webServer.IsRunning
                     ? "Web-Dashboard: an" : "Web-Dashboard: aus";
@@ -503,6 +586,29 @@ namespace WifiScanner
             if (_apLabel != null && apLocator != null)
                 _apLabel.text = apLocator.IsVisible
                     ? "AP-Standort: an" : "AP-Standort: aus";
+            if (_bssidLabel != null && collector != null)
+            {
+                var bssids = collector.KnownBssids;
+                if (_bssidIndex >= bssids.Count)
+                {
+                    // List shrank (clear/load): drop the stale filter too.
+                    _bssidIndex = -1;
+                    floor?.SetBssidFilter("");
+                    apLocator?.SetBssidFilter("");
+                }
+                if (_bssidIndex < 0)
+                    _bssidLabel.text = $"AP: Alle ({bssids.Count})";
+                else
+                {
+                    var info = bssids[_bssidIndex];
+                    _bssidLabel.text = $"AP {_bssidIndex + 1}/{bssids.Count} · " +
+                                       $"{Sample.BandLabel(info.frequencyMhz)}";
+                }
+            }
+            if (_roamLabel != null && roaming != null)
+                _roamLabel.text = roaming.IsVisible
+                    ? $"Roaming: an ({roaming.Events.Count})"
+                    : "Roaming: aus";
             if (_coverageLabel != null && coverage != null)
                 _coverageLabel.text = !coverage.IsVisible
                     ? "Prognose: aus"
@@ -612,7 +718,7 @@ namespace WifiScanner
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             var rootRt = (RectTransform)_root.transform;
-            rootRt.sizeDelta = new Vector2(480f, 860f); // tallest page: Ansicht
+            rootRt.sizeDelta = new Vector2(480f, 920f); // tallest page: Ansicht
             _root.transform.localScale = Vector3.one * 0.0008f; // 0.38 x 0.69 m
             _root.AddComponent<GraphicRaycaster>();            // editor mouse
             _root.AddComponent<TrackedDeviceGraphicRaycaster>(); // XR rays
@@ -723,6 +829,11 @@ namespace WifiScanner
                 ("AP-Standort: aus", OnApLocatorClicked));
             _mapRotateLabel = mapApLabels[0];
             _apLabel = mapApLabels[1];
+            var bssidLabels = UiBuilder.AddButtonRow(page,
+                ("AP: Alle", OnBssidCycleClicked),
+                ("Roaming: an", OnRoamingClicked));
+            _bssidLabel = bssidLabels[0];
+            _roamLabel = bssidLabels[1];
             if (geiger != null && coverage != null)
             {
                 var extraRow = UiBuilder.AddButtonRow(page,
@@ -786,10 +897,29 @@ namespace WifiScanner
             {
                 UiBuilder.AddHeader(page, "Etagen");
                 var floorLabels = UiBuilder.AddButtonRow(page,
-                    ("Etage: EG", OnFloorCycleClicked),
+                    ("Etage: EG ▾", OnFloorDropdownClicked),
                     ("Etage anlegen", OnFloorCreateClicked));
                 _floorLabel = floorLabels[0];
                 _floorCreateLabel = floorLabels[1];
+
+                // Collapsible storey list ("dropdown"): filled on open, one
+                // button per storey (top first) plus "Alle".
+                _floorListGo = new GameObject("FloorList", typeof(RectTransform));
+                _floorListGo.transform.SetParent(page, false);
+                var listLayout = _floorListGo.AddComponent<VerticalLayoutGroup>();
+                listLayout.spacing = 6f;
+                listLayout.childControlWidth = true;
+                listLayout.childControlHeight = true;
+                listLayout.childForceExpandWidth = true;
+                listLayout.childForceExpandHeight = false;
+                _floorListGo.SetActive(false);
+
+                UiBuilder.AddButtonRow(page,
+                    ("▲ Etage darüber", OnFloorAboveClicked),
+                    ("▼ Etage darunter", OnFloorBelowClicked));
+                UiBuilder.AddButtonRow(page,
+                    ("Bezeichnung ▲", OnLabelShiftUpClicked),
+                    ("Bezeichnung ▼", OnLabelShiftDownClicked));
             }
         }
 

@@ -308,6 +308,8 @@ MonoBehaviour:
   webPort: 8080
   autoStartRecording: 0
   autosaveInterval: 30
+  enableResumePrompt: 1
+  enableOnboarding: 1
   enableControllerControls: 1
   enableToolPalette: 1
   minPointSpacing: 0.1
@@ -340,6 +342,8 @@ MonoBehaviour:
   pingPort: 443
   enableSpatialNotes: 1
   enableDistanceMeasurer: 1
+  enableGeigerAudio: 1
+  hapticStrength: 1.572
   hideControllerModels: 1
   enableDynamicOcclusion: 1
   occlusionOnAtStart: 0

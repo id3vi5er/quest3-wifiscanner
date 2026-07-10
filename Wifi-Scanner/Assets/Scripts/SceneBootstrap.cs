@@ -141,6 +141,13 @@ namespace WifiScanner
                  "RSSI. Starts off; toggled via the panel ('Audio').")]
         public bool enableGeigerAudio = true;
 
+        [Header("Haptic feedback")]
+        [Tooltip("Global strength of ALL controller vibrations (tool clicks, " +
+                 "placements, deletions). 0 = off, 1 = default, 2 = double. " +
+                 "Live-adjustable in Play Mode.")]
+        [Range(0f, 2f)]
+        public float hapticStrength = 1f;
+
         [Header("Controllers")]
         [Tooltip("Hide the rendered controller models; rays, menus and HUD stay.")]
         public bool hideControllerModels = true;
@@ -161,8 +168,16 @@ namespace WifiScanner
         private SampleCollector _collector;
         private float _autosaveTimer;
 
+        // Applies the inspector slider while tuning in Play Mode.
+        private void OnValidate()
+        {
+            Haptics.GlobalStrength = hapticStrength;
+        }
+
         private void Awake()
         {
+            Haptics.GlobalStrength = hapticStrength;
+
             // --- Point cloud renderer + runtime instanced material ---
             var cloudGo = new GameObject("WifiCloud");
             cloudGo.transform.SetParent(transform, false);
@@ -210,6 +225,8 @@ namespace WifiScanner
             {
                 floorManager = gameObject.AddComponent<FloorManager>();
                 _collector.floorManager = floorManager;
+                // Inserting a storey below shifts floor indices — remap tags.
+                floorManager.FloorInserted += _collector.OnFloorInserted;
             }
 
             // --- Floor heatmap (IDW-interpolated, with gap display) ---
@@ -262,6 +279,7 @@ namespace WifiScanner
                 roomTracer.cursorVisible = roomCursorVisible;
                 roomTracer.cursorDiameter = roomCursorDiameter;
                 roomTracer.streamer = streamer; // live floor plan on the PC
+                roomTracer.floorManager = floorManager; // work plane = active storey
                 _collector.roomTracer = roomTracer;
             }
 
@@ -313,6 +331,7 @@ namespace WifiScanner
                 apLocator.streamer = streamer;
                 apLocator.minSamples = apLocatorMinSamples;
                 _collector.apLocator = apLocator;
+                if (minimap != null) minimap.apLocator = apLocator; // map dots
             }
 
             // --- Wall attenuation estimate (needs rooms + AP fit) ---
@@ -365,6 +384,8 @@ namespace WifiScanner
                 _collector.spatialNotes = spatialNotes;
                 if (coverage != null)
                     coverage.spatialNotes = spatialNotes; // virtual APs
+                if (minimap != null)
+                    minimap.spatialNotes = spatialNotes;  // virtual APs on the map
             }
 
             // --- Distance measurer (laser between two frozen points) ---
@@ -421,6 +442,13 @@ namespace WifiScanner
                 deleter.pingTester = pingTester;
                 deleter.spatialNotes = spatialNotes;
             }
+
+            // --- Roaming tracker (marks BSSID switches in the room) ---
+            var roaming = gameObject.AddComponent<RoamingTracker>();
+            roaming.collector = _collector;
+            roaming.streamer = streamer;
+            roaming.visualMaterial = pointMaterialOverride;
+            _collector.roaming = roaming;
 
             // --- Geiger-counter audio feedback (RSSI -> tick rate) ---
             GeigerCounter geiger = null;
@@ -494,6 +522,7 @@ namespace WifiScanner
                 panel.wallLoss = wallLoss;
                 panel.coverage = coverage;
                 panel.onboarding = onboarding;
+                panel.roaming = roaming;
             }
 
             Debug.Log("[SceneBootstrap] WiFi scanner initialised " +

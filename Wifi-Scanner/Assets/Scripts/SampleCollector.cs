@@ -50,6 +50,8 @@ namespace WifiScanner
         public WallLossEstimator wallLoss;
         [Tooltip("Optional: exports the coverage prediction (_coverage.png).")]
         public CoverageSimulator coverage;
+        [Tooltip("Optional: exports roaming events (_roam.json).")]
+        public RoamingTracker roaming;
         [Tooltip("Optional: multi-storey manager — tags each point with its floor.")]
         public FloorManager floorManager;
 
@@ -64,10 +66,28 @@ namespace WifiScanner
         [Tooltip("Number of RSSI readings averaged per recorded point.")]
         public int smoothingWindow = 5;
 
+        /// <summary>One access point seen in the data (unique BSSID).</summary>
+        [Serializable]
+        public class BssidInfo
+        {
+            public string bssid;
+            public string ssid;
+            public int frequencyMhz;
+            public int sampleCount;
+        }
+
         public bool IsRecording { get; private set; }
         public int SampleCount => _samples.Count;
         public int LastRssi { get; private set; } = -127;
         public string LastSsid { get; private set; } = "";
+        /// <summary>BSSID of the currently connected AP ("" while unknown) —
+        /// polled every frame like LastRssi (roaming detection).</summary>
+        public string LastBssid { get; private set; } = "";
+        /// <summary>Channel frequency of the connected AP (MHz, 0 unknown).</summary>
+        public int LastFrequency { get; private set; }
+        /// <summary>All access points (unique BSSIDs) seen in the recorded
+        /// samples, in first-seen order — feeds the per-AP heatmap filter.</summary>
+        public IReadOnlyList<BssidInfo> KnownBssids => _bssids;
         /// <summary>Total time spent recording (s), across pauses. Reset by ClearAll.</summary>
         public float RecordingSeconds { get; private set; }
         /// <summary>Recorded points (running-averaged per grid cell). Read-only view
@@ -81,6 +101,9 @@ namespace WifiScanner
 
         private readonly List<Sample> _samples = new List<Sample>();
         private readonly Queue<int> _rssiWindow = new Queue<int>();
+        private readonly List<BssidInfo> _bssids = new List<BssidInfo>();
+        private readonly Dictionary<string, BssidInfo> _bssidByKey =
+            new Dictionary<string, BssidInfo>();
 
         // Spatial hash grid for O(1) nearest-point lookup. Cell size == spacing,
         // so any point within minPointSpacing lives in one of the 27 neighbours.
@@ -116,6 +139,8 @@ namespace WifiScanner
                 PushRssi(wifi.rssiDbm);
                 LastRssi = wifi.rssiDbm;
                 LastSsid = wifi.ssid;
+                LastBssid = wifi.bssid ?? "";
+                LastFrequency = wifi.frequencyMhz;
             }
 
             if (!IsRecording || headAnchor == null) return;
@@ -128,7 +153,10 @@ namespace WifiScanner
 
             Vector3 pos = headAnchor.position;
             int rssi = SmoothedRssi();
-            int nearest = FindNearestWithin(pos, minPointSpacing);
+            // Folding is BSSID-exact: after roaming, a revisited spot gets a
+            // NEW point for the new AP instead of polluting the old AP's
+            // running average — each BSSID keeps its own clean heatmap.
+            int nearest = FindNearestWithin(pos, minPointSpacing, wifi.bssid);
             if (nearest < 0) RecordSample(pos, rssi, wifi); // new point
             else             UpdateSample(nearest, rssi);   // fold into existing
         }
@@ -144,6 +172,7 @@ namespace WifiScanner
             _samples.Add(sample);
             _hitCounts.Add(1);
             AddToGrid(index, pos);
+            RegisterBssid(in sample);
 
             int handle = pointCloud != null ? pointCloud.AddPoint(pos, rssi, floor) : -1;
             _renderHandles.Add(handle);
@@ -186,8 +215,10 @@ namespace WifiScanner
             list.Add(index);
         }
 
-        // Index of the closest existing sample within radius r, or -1 if none.
-        private int FindNearestWithin(Vector3 pos, float r)
+        // Index of the closest existing sample of the SAME BSSID within radius
+        // r, or -1 if none (points of other APs at the same spot don't count —
+        // their averages must stay unmixed).
+        private int FindNearestWithin(Vector3 pos, float r, string bssid)
         {
             Vector3Int c = CellOf(pos);
             float bestSqr = r * r;
@@ -201,6 +232,8 @@ namespace WifiScanner
                 foreach (int idx in list)
                 {
                     var s = _samples[idx];
+                    if (!string.Equals(s.bssid, bssid, StringComparison.Ordinal))
+                        continue;
                     float sqr = (new Vector3(s.posX, s.posY, s.posZ) - pos).sqrMagnitude;
                     if (sqr <= bestSqr)
                     {
@@ -210,6 +243,24 @@ namespace WifiScanner
                 }
             }
             return best;
+        }
+
+        // Keeps the unique-BSSID registry (per-AP heatmap filter) in sync.
+        private void RegisterBssid(in Sample s)
+        {
+            if (string.IsNullOrEmpty(s.bssid)) return;
+            if (!_bssidByKey.TryGetValue(s.bssid, out var info))
+            {
+                info = new BssidInfo
+                {
+                    bssid = s.bssid,
+                    ssid = s.ssid,
+                    frequencyMhz = s.frequencyMhz,
+                };
+                _bssidByKey[s.bssid] = info;
+                _bssids.Add(info);
+            }
+            info.sampleCount++;
         }
 
         private void PushRssi(int rssi)
@@ -243,6 +294,8 @@ namespace WifiScanner
             _grid.Clear();
             _renderHandles.Clear();
             _hitCounts.Clear();
+            _bssids.Clear();
+            _bssidByKey.Clear();
             RecordingSeconds = 0f;
             DataRevision++;
             pointCloud?.Clear();
@@ -268,12 +321,41 @@ namespace WifiScanner
                 _samples.Add(s);
                 _hitCounts.Add(1);
                 AddToGrid(i, pos);
+                RegisterBssid(in s);
                 _renderHandles.Add(pointCloud != null
                     ? pointCloud.AddPoint(pos, s.rssiDbm, s.floor)
                     : -1);
             }
             DataRevision++; // one bump -> heatmap + AP locator rebuild once
             Debug.Log($"[SampleCollector] {loaded.Count} Samples geladen.");
+        }
+
+        /// <summary>
+        /// Remaps the floor tags of already-recorded samples after a storey was
+        /// INSERTED at <paramref name="atIndex"/> (e.g. a basement below the
+        /// known floors): indices at/above the slot shifted by +1. Rebuilds the
+        /// point cloud with the corrected tags. Subscribed to
+        /// <see cref="FloorManager.FloorInserted"/> by SceneBootstrap.
+        /// </summary>
+        public void OnFloorInserted(int atIndex)
+        {
+            if (_samples.Count == 0) return;
+            bool wasRecording = IsRecording;
+            float seconds = RecordingSeconds;
+            var moved = new List<Sample>(_samples);
+            for (int i = 0; i < moved.Count; i++)
+            {
+                var s = moved[i];
+                if (s.floor >= atIndex)
+                {
+                    s.floor++;
+                    moved[i] = s;
+                }
+            }
+            LoadSamples(moved); // rebuild cloud + spatial hash, one revision bump
+            RecordingSeconds = seconds; // ClearAll inside LoadSamples reset it
+            if (wasRecording) StartRecording();
+            Debug.Log($"[SampleCollector] Etagen-Indizes ab {atIndex} remappt.");
         }
 
         /// <summary>Min/max/average RSSI over all recorded points. False if empty.</summary>
@@ -319,7 +401,10 @@ namespace WifiScanner
                 DataExporter.ExportApFixJson(apLocator.FixPosition, apLocator.FixSsid,
                     apLocator.FixRssi, stem,
                     apLocator.HasFit ? apLocator.FixRadius : 0f,
-                    apLocator.PathLossExponent, apLocator.PowerAt1mDbm);
+                    apLocator.PathLossExponent, apLocator.PowerAt1mDbm,
+                    apLocator.Estimates);
+            if (roaming != null && roaming.Events.Count > 0)
+                DataExporter.ExportRoamJson(roaming.Events, stem);
             if (pingTester != null && pingTester.Samples.Count > 0)
                 DataExporter.ExportPingJson(pingTester.Samples, stem);
             if (spatialNotes != null && spatialNotes.Notes.Count > 0)

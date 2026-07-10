@@ -52,9 +52,10 @@ namespace WifiScanner
     ///
     /// Floor calibration ("Boden kalibrieren" on the panel): the cursor stays
     /// UNprojected — hold it onto the real floor and pull the trigger; the
-    /// measured height becomes the floor plane for tracing AND the heatmap
-    /// (FloorHeatmapRenderer.SetFloorOverride), and existing rooms shift onto
-    /// the new floor.
+    /// measured height becomes the work plane for tracing AND corrects the
+    /// ACTIVE storey's base (FloorHeatmapRenderer.SetFloorOverride). Finished
+    /// rooms keep their own floorY — storeys stack, they never shift along.
+    /// With a FloorManager the work plane follows the active storey.
     ///
     /// RecordingControls is suspended while tracing so A/B don't also toggle
     /// recording/export. Created and wired by SceneBootstrap.
@@ -62,6 +63,11 @@ namespace WifiScanner
     public class RoomTracer : MonoBehaviour, IExclusiveTool
     {
         private enum DragMode { None, Height, Corner }
+
+        [Tooltip("Optional: multi-storey manager — new rooms are drawn on the " +
+                 "ACTIVE storey's plane; rooms of other storeys are ignored by " +
+                 "corner/height grabs. Wired by SceneBootstrap.")]
+        public FloorManager floorManager;
 
         [Header("Wired by SceneBootstrap")]
         [Tooltip("For grid-aligned SVG export and the shared floor plane.")]
@@ -270,6 +276,19 @@ namespace WifiScanner
             }
         }
 
+        /// <summary>
+        /// The work plane follows the ACTIVE storey (auto-switched on stairs or
+        /// picked in the panel dropdown) — frozen while a polygon is open or a
+        /// drag runs, so in-progress geometry stays coplanar.
+        /// </summary>
+        private void SyncWorkPlane()
+        {
+            if (floorManager == null || floorManager.Floors.Count == 0) return;
+            if (_activeCorners.Count > 0 || _drag != DragMode.None) return;
+            _floorY = floorManager.ActiveBaseY;
+            _hasFloor = true;
+        }
+
         // ---- Main loop ----
 
         private void Update()
@@ -284,6 +303,8 @@ namespace WifiScanner
             }
 
             if (!IsActive && !IsCalibratingFloor) return;
+
+            SyncWorkPlane();
 
             GetPointer(out Vector3 handPos, out Vector3 handFwd);
             Vector3 rawCursor = handPos + handFwd * cursorDistance;
@@ -385,13 +406,11 @@ namespace WifiScanner
             IsCalibratingFloor = false;
             RefreshCursorVisible();
 
-            // Share the plane with the heatmap and move existing rooms onto it.
+            // Share the plane with the heatmap (corrects the ACTIVE storey's
+            // base with a FloorManager present). Finished rooms deliberately
+            // keep their own floorY — with stacked storeys, recalibrating one
+            // floor must never drag other floors' rooms along.
             if (floor != null) floor.SetFloorOverride(newFloorY);
-            foreach (var v in _visuals)
-            {
-                v.outline.floorY = newFloorY;
-                RebuildRoomVisual(v);
-            }
             for (int i = 0; i < _activeCorners.Count; i++)
             {
                 Vector3 c = _activeCorners[i];
@@ -401,7 +420,7 @@ namespace WifiScanner
             }
             SendRoomsUpdate();
             Debug.Log($"[RoomTracer] Boden kalibriert: y = {newFloorY:F3} m " +
-                      $"(vorher {old:F3}).");
+                      $"(vorher {old:F3}). Räume bleiben auf ihren Etagen.");
         }
 
         // ---- Height pull ----
@@ -464,6 +483,9 @@ namespace WifiScanner
             var p = new Vector2(cursor.x, cursor.z);
             for (int r = 0; r < _visuals.Count; r++)
             {
+                // Stacked storeys: only rooms on the current work plane are
+                // grabbable — a corner one floor up must not react.
+                if (Mathf.Abs(_visuals[r].outline.floorY - _floorY) > 1f) continue;
                 var corners = _visuals[r].outline.cornersXZ;
                 for (int i = 0; i < corners.Count; i++)
                 {
@@ -494,6 +516,8 @@ namespace WifiScanner
             var p = new Vector2(point.x, point.z);
             for (int r = 0; r < _visuals.Count; r++)
             {
+                // Height pull only targets rooms on the current work plane.
+                if (Mathf.Abs(_visuals[r].outline.floorY - _floorY) > 1f) continue;
                 if (PointInPolygon(p, _visuals[r].outline.cornersXZ))
                 {
                     roomIdx = r;

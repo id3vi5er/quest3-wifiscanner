@@ -47,6 +47,11 @@ namespace WifiScanner
                  "shows ITS texture instead of the measured heatmap (same grid " +
                  "space, so all overlays stay georeferenced).")]
         public CoverageSimulator coverage;
+        [Tooltip("Optional: draws the estimated AP position(s) on the map " +
+                 "(cyan dots, follows the AP-locator visibility + filter).")]
+        public ApLocator apLocator;
+        [Tooltip("Optional: draws virtual-AP notes on the map (violet dots).")]
+        public SpatialNoteManager spatialNotes;
 
         [Header("Wrist panel placement (relative to the right controller)")]
         public Vector3 panelLocalPosition = new Vector3(0f, 0.04f, -0.06f);
@@ -105,6 +110,9 @@ namespace WifiScanner
         private RawImage _trail;
         private Texture2D _trailTex;
         private Color32[] _trailPixels;
+        private RawImage _apOverlay;
+        private Texture2D _apOverlayTex;
+        private Color32[] _apOverlayPixels;
         private readonly System.Collections.Generic.List<Vector2> _trailXZ =
             new System.Collections.Generic.List<Vector2>();
         private Vector2 _fittedMapSize;
@@ -233,6 +241,23 @@ namespace WifiScanner
             _trailPixels = new Color32[trailResolution * trailResolution];
             _trail.texture = _trailTex;
             _trail.enabled = false;
+
+            // AP-marker overlay on top (estimated APs + virtual-AP notes),
+            // same 1:1 georeference as floor plan and trail.
+            var apGo = new GameObject("ApMarkers", typeof(RectTransform));
+            apGo.transform.SetParent(mapGo.transform, false);
+            _apOverlay = apGo.AddComponent<RawImage>();
+            _apOverlay.raycastTarget = false;
+            Stretch(_apOverlay.rectTransform);
+            _apOverlayTex = new Texture2D(floorPlanResolution, floorPlanResolution,
+                TextureFormat.RGBA32, false)
+            {
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+            };
+            _apOverlayPixels = new Color32[floorPlanResolution * floorPlanResolution];
+            _apOverlay.texture = _apOverlayTex;
+            _apOverlay.enabled = false;
 
             _placeholder = new GameObject("Placeholder", typeof(RectTransform))
                 .AddComponent<TextMeshProUGUI>();
@@ -406,6 +431,7 @@ namespace WifiScanner
             {
                 _floorPlan.enabled = false;
                 _trail.enabled = false;
+                _apOverlay.enabled = false;
                 return;
             }
 
@@ -419,6 +445,78 @@ namespace WifiScanner
 
             RedrawFloorPlan(worldMin, cell, w, h);
             RedrawTrail(worldMin, cell, w, h);
+            RedrawApMarkers(worldMin, cell, w, h);
+        }
+
+        // Estimated AP positions (cyan, gated by the AP-locator toggle and its
+        // per-AP filter) and virtual-AP notes (violet, always).
+        private void RedrawApMarkers(Vector2 worldMin, float cell, int w, int h)
+        {
+            bool anyEstimates = apLocator != null && apLocator.IsVisible &&
+                                apLocator.Estimates.Count > 0;
+            bool anyNotes = false;
+            if (spatialNotes != null)
+                foreach (var note in spatialNotes.Notes)
+                    if (note.type == "VirtualAp") { anyNotes = true; break; }
+
+            _apOverlay.enabled = anyEstimates || anyNotes;
+            if (!_apOverlay.enabled) return;
+
+            var clear = new Color32(0, 0, 0, 0);
+            for (int i = 0; i < _apOverlayPixels.Length; i++)
+                _apOverlayPixels[i] = clear;
+
+            int res = floorPlanResolution;
+            float mapW = w * cell;
+            float mapH = h * cell;
+
+            if (anyEstimates)
+            {
+                var cyan = new Color32(0, 210, 255, 255);
+                var dark = new Color32(10, 40, 55, 255);
+                string filter = apLocator.BssidFilter;
+                foreach (var est in apLocator.Estimates)
+                {
+                    if (filter.Length > 0 && est.bssid != filter) continue;
+                    Vector2 p = WorldToOverlayPx(new Vector2(est.posX, est.posZ),
+                        worldMin, mapW, mapH, res);
+                    PlotDisc(p, 5f, dark, res, _apOverlayPixels);  // outline
+                    PlotDisc(p, 3.5f, cyan, res, _apOverlayPixels);
+                }
+            }
+            if (anyNotes)
+            {
+                var violet = new Color32(200, 90, 255, 255);
+                var dark = new Color32(50, 15, 65, 255);
+                foreach (var note in spatialNotes.Notes)
+                {
+                    if (note.type != "VirtualAp") continue;
+                    Vector2 p = WorldToOverlayPx(new Vector2(note.posX, note.posZ),
+                        worldMin, mapW, mapH, res);
+                    PlotDisc(p, 5f, dark, res, _apOverlayPixels);
+                    PlotDisc(p, 3.5f, violet, res, _apOverlayPixels);
+                }
+            }
+
+            _apOverlayTex.SetPixels32(_apOverlayPixels);
+            _apOverlayTex.Apply(false);
+        }
+
+        private static void PlotDisc(Vector2 center, float radius, Color32 c,
+            int res, Color32[] pixels)
+        {
+            int x0 = Mathf.Max(0, Mathf.FloorToInt(center.x - radius));
+            int x1 = Mathf.Min(res - 1, Mathf.CeilToInt(center.x + radius));
+            int y0 = Mathf.Max(0, Mathf.FloorToInt(center.y - radius));
+            int y1 = Mathf.Min(res - 1, Mathf.CeilToInt(center.y + radius));
+            float r2 = radius * radius;
+            for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++)
+            {
+                float dx = x - center.x, dy = y - center.y;
+                if (dx * dx + dy * dy <= r2)
+                    pixels[y * res + x] = c;
+            }
         }
 
         /// <summary>North-up (fixed map, rotating arrow) vs. ego view
@@ -454,8 +552,17 @@ namespace WifiScanner
             float mapW = w * cell;
             float mapH = h * cell;
 
+            // Stacked storeys: the map shows only the ACTIVE storey's rooms
+            // (unless "Alle" is selected) — the floor plan above/below would
+            // just overlap confusingly.
+            bool filterFloor = floorManager != null && !floorManager.ShowAll &&
+                               floorManager.Floors.Count > 0;
+            float activeBase = filterFloor ? floorManager.ActiveBaseY : 0f;
+
             foreach (var room in roomTracer.Rooms)
             {
+                if (filterFloor && Mathf.Abs(room.floorY - activeBase) > 1f)
+                    continue;
                 int n = room.cornersXZ.Count;
                 for (int i = 0; i < n; i++)
                 {
