@@ -31,8 +31,7 @@ Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
   laufendem Mittelwert aktualisiert statt dupliziert.
 - **Boden-Heatmap** pro aktiver Etage: IDW-Interpolation, Lueckenraster,
   Deckkraft- und RSSI-Filter.
-- **Multi-Etage**: Punkte werden beim Aufnehmen einer Etage zugeordnet,
-  Etagen koennen angelegt, gewechselt und gefiltert werden.
+- **Multi-Etage**: Punkte werden beim Aufnehmen einer Etage zugeordnet. Unterstuetzt Kellergeschosse (KG), beliebige Etagenverschiebungen und filterbare Ansichten.
 - **Manueller Raumzeichner**: Ecken setzen, Ecken verschieben, Raumhoehe
   ziehen, Boden kalibrieren.
 - **Tueren/Fenster**: Wand-Oeffnungen werden in AR visualisiert, im SVG als
@@ -49,6 +48,8 @@ Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
 - **Analysewerkzeuge**: AP-Standort-Schaetzung, TCP-Latenz-Punkte,
   raeumliche Notizen, Distanzmessung, Bohrplanung und universeller
   Loeschmodus.
+- **Multi-AP-Support**: Gleichzeitige Standort-Schaetzung und Unsicherheits-Kreise fuer mehrere Access Points (BSSIDs).
+- **Roaming-Tracking**: Erkennt BSSID- oder Band-Wechsel (z. B. in Mesh-Netzwerken) waehrend der Aufnahme, markiert diese als physisches Ereignis im Raum und exportiert sie.
 - **Coverage-Simulation (Prognose)**: Echtzeit-Pfadverlust-Vorhersage basierend
   auf dem Grundriss (Raumwaende, Tueren/Fenster) und einem realen (fixierten)
   oder virtuell gesetzten AP.
@@ -71,6 +72,7 @@ Beim Export schreibt die App nach `Application.persistentDataPath`:
 - `<stem>_rooms.svg` und `<stem>_rooms.json` fuer den Grundriss
 - `<stem>_walls.svg` als Grundriss mit beschrifteten Wand-Daempfungen (in dB)
 - `<stem>_coverage.png` plus `<stem>_coverage.json` mit der simulierten Coverage-Prognose
+- `<stem>_roam.json` fuer aufgezeichnete Roaming-Ereignisse (BSSID-/Band-Wechsel)
 - `<stem>_rooms.obj` fuer extrudierte Raumwaende mit Tuer-/Fensterloechen
 - `<stem>_combined.svg` als kombinierte Heatmap+Grundriss-Ansicht
 - optional `<stem>_drill.json`, `<stem>_apfix.json`, `<stem>_ping.json`,
@@ -328,7 +330,8 @@ Das Dashboard zeigt live:
 - Simulierte Coverage-Prognose (inkl. Waende und virtuellen/realen APs)
 - Laufpfad und aktuelle Kopfposition
 - Raeume mit Tueren/Fenstern
-- AP-Standort
+- AP-Standort (inkl. mehrerer BSSIDs)
+- Roaming-Ereignisse
 - Ping-Knoten
 - Notizen
 - Etagenfilter
