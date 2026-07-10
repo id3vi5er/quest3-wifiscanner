@@ -17,6 +17,11 @@
     <!-- Live-Stream an den PC im lokalen Netz -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- System-Overlay-Tastatur (sonst öffnet TouchScreenKeyboard auf
+         Horizon OS nicht, z. B. für das Export-Namensfeld) -->
+    <uses-feature android:name="oculus.software.overlay_keyboard"
+                  android:required="false" />
+
     <application>
         <!-- Hauptaktivität fuer den GameActivity-Einstiegspunkt
              (androidApplicationEntry=2). Muss hier benannt deklariert sein,

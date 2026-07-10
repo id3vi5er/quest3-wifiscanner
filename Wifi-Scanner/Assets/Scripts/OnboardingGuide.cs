@@ -1,0 +1,255 @@
+using System;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.InputSystem;
+using UnityEngine.XR.Interaction.Toolkit.UI;
+
+namespace WifiScanner
+{
+    /// <summary>
+    /// First-run tutorial: a floating card walks through the core workflow
+    /// (floor calibration → room tracing → recording → export). Steps with an
+    /// observable outcome (room drawn, recording running) advance
+    /// automatically; the rest via "Weiter". "Überspringen" ends it any time.
+    /// Shows once (PlayerPrefs "wifi_onboarded"); "Tutorial starten" on the
+    /// panel's System tab re-runs it. Created and wired by SceneBootstrap.
+    /// </summary>
+    public class OnboardingGuide : MonoBehaviour
+    {
+        private const string PrefsKey = "wifi_onboarded";
+
+        [Header("Wired by SceneBootstrap")]
+        public SampleCollector collector;
+        public RoomTracer roomTracer; // optional
+
+        [Tooltip("Distance in front of the user (m).")]
+        public float summonDistance = 0.9f;
+        [Tooltip("Vertical offset relative to eye height (m).")]
+        public float summonHeightOffset = 0.15f;
+
+        private class Step
+        {
+            public string title;
+            public string text;
+            public Func<bool> autoAdvance; // null = only the Weiter button
+        }
+
+        private Step[] _steps;
+        private int _index = -1;
+        private GameObject _root;
+        private TextMeshProUGUI _title;
+        private TextMeshProUGUI _text;
+        private TextMeshProUGUI _nextLabel;
+        private UnityEngine.InputSystem.InputAction _posAction;
+        private UnityEngine.InputSystem.InputAction _rotAction;
+
+        private void Start()
+        {
+            BuildSteps();
+            if (PlayerPrefs.GetInt(PrefsKey, 0) == 0)
+                StartTutorial();
+        }
+
+        /// <summary>(Re)starts the tutorial from the first step.</summary>
+        public void StartTutorial()
+        {
+            if (_root == null) BuildCard();
+            _index = -1;
+            _root.SetActive(true);
+            Advance();
+        }
+
+        public bool IsRunning => _root != null && _root.activeSelf;
+
+        private void BuildSteps()
+        {
+            _steps = new[]
+            {
+                new Step
+                {
+                    title = "Willkommen!",
+                    text = "Diese App macht dein WLAN sichtbar: Beim Laufen " +
+                           "werden Signalstärke-Punkte in den Raum gezeichnet.\n\n" +
+                           "Linkes Handgelenk = Werkzeug-Palette,\n" +
+                           "Menü-Taste (links) = Hauptmenü,\n" +
+                           "rechtes Handgelenk = Minimap + Status.",
+                },
+                new Step
+                {
+                    title = "Boden kalibrieren",
+                    text = "Menü → Tab „Räume“ → „Boden kalibrieren“: den " +
+                           "Cursor an den echten Boden halten und Trigger " +
+                           "drücken. Damit sitzen Heatmap und Räume exakt.",
+                },
+                new Step
+                {
+                    title = "Raum zeichnen",
+                    text = "Auf der Palette (linkes Handgelenk) „Raum“ antippen, " +
+                           "dann mit dem Trigger die Ecken deines Raums anklicken. " +
+                           "B = Raum schließen, A = letzte Ecke zurück.\n\n" +
+                           "<color=#7CFC7C>Geht automatisch weiter, sobald ein " +
+                           "Raum fertig ist.</color>",
+                    autoAdvance = () => roomTracer != null && roomTracer.Rooms.Count > 0,
+                },
+                new Step
+                {
+                    title = "Aufnahme starten",
+                    text = "A-Taste (rechts) oder Menü → „Aufnahme“ startet die " +
+                           "Messung. Dann einfach langsam durch den Raum gehen — " +
+                           "die farbigen Punkte zeigen die Signalstärke.\n\n" +
+                           "<color=#7CFC7C>Geht automatisch weiter, sobald " +
+                           "Messpunkte da sind.</color>",
+                    autoAdvance = () => collector != null &&
+                        collector.IsRecording && collector.SampleCount > 20,
+                },
+                new Step
+                {
+                    title = "Ansicht & Karte",
+                    text = "R-Stick-Klick wechselt Punktwolke/Heatmap. " +
+                           "Y (links) blendet die Minimap ein/aus, R-Stick " +
+                           "hoch/runter zoomt sie. Im Menü-Tab „Ansicht“ gibt es " +
+                           "Filter, Occlusion und die Prognose.",
+                },
+                new Step
+                {
+                    title = "Export & Bericht",
+                    text = "Menü → „Aufnahme“ → „Export“ schreibt CSV/PNG/SVG/OBJ " +
+                           "und einen HTML-Bericht auf die Brille. Über das " +
+                           "Web-Dashboard (Tab „System“) lädst du alles ohne " +
+                           "Kabel aufs Handy oder den PC.\n\nViel Spaß!",
+                },
+            };
+        }
+
+        private void OnEnable()
+        {
+            _posAction = new UnityEngine.InputSystem.InputAction("GuidePos",
+                UnityEngine.InputSystem.InputActionType.Value,
+                "<XRController>{RightHand}/pointerPosition", expectedControlType: "Vector3");
+            _posAction.AddBinding("<XRController>{RightHand}/devicePosition"); // fallback
+            _rotAction = new UnityEngine.InputSystem.InputAction("GuideRot",
+                UnityEngine.InputSystem.InputActionType.Value,
+                "<XRController>{RightHand}/pointerRotation", expectedControlType: "Quaternion");
+            _rotAction.AddBinding("<XRController>{RightHand}/deviceRotation"); // fallback
+            _posAction.Enable();
+            _rotAction.Enable();
+        }
+
+        private void Update()
+        {
+            if (!IsRunning) return;
+
+            // Hover guard: an active tool (e.g. the room tracer during its own
+            // tutorial step) must not fire when the user clicks "Weiter".
+            UpdateHover();
+
+            if (_index < 0 || _index >= _steps.Length) return;
+            var step = _steps[_index];
+            if (step.autoAdvance != null && step.autoAdvance())
+            {
+                Haptics.TickRight();
+                Advance();
+            }
+        }
+
+        private void UpdateHover()
+        {
+            if (_root == null) return;
+            Vector3 pos = _posAction.ReadValue<Vector3>();
+            Quaternion rot = _rotAction.ReadValue<Quaternion>();
+            var cam = Camera.main;
+            Transform space = cam != null ? cam.transform.parent : null;
+            Vector3 origin = space != null ? space.TransformPoint(pos) : pos;
+            Vector3 dir = space != null
+                ? space.rotation * rot * Vector3.forward
+                : rot * Vector3.forward;
+            XrUiHover.Set(this, XrUiHover.RayOverRect(origin, dir,
+                (RectTransform)_root.transform, margin: 0.06f));
+        }
+
+        private void Advance()
+        {
+            _index++;
+            if (_index >= _steps.Length)
+            {
+                Finish();
+                return;
+            }
+            var step = _steps[_index];
+            _title.text = $"{step.title}  <color=#8a93a6>({_index + 1}/{_steps.Length})</color>";
+            _text.text = step.text;
+            if (_nextLabel != null)
+                _nextLabel.text = _index == _steps.Length - 1 ? "Fertig" : "Weiter";
+            PlaceInFrontOfUser();
+        }
+
+        private void Finish()
+        {
+            PlayerPrefs.SetInt(PrefsKey, 1);
+            PlayerPrefs.Save();
+            if (_root != null) _root.SetActive(false);
+            XrUiHover.Clear(this);
+        }
+
+        private void OnDisable()
+        {
+            _posAction?.Disable();
+            _rotAction?.Disable();
+            XrUiHover.Clear(this);
+        }
+
+        private void PlaceInFrontOfUser()
+        {
+            var cam = Camera.main;
+            if (cam == null || _root == null) return;
+            Vector3 fwd = cam.transform.forward;
+            fwd.y = 0f;
+            if (fwd.sqrMagnitude < 1e-4f) return;
+            fwd.Normalize();
+            _root.transform.position = cam.transform.position
+                + fwd * summonDistance + Vector3.up * summonHeightOffset;
+            _root.transform.rotation = Quaternion.LookRotation(fwd);
+        }
+
+        private void BuildCard()
+        {
+            XrUiHover.EnsureXrUiInputModule();
+
+            _root = new GameObject("OnboardingCard", typeof(RectTransform), typeof(Canvas));
+            _root.transform.SetParent(transform, false);
+            _root.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            var rt = (RectTransform)_root.transform;
+            rt.sizeDelta = new Vector2(460f, 360f);
+            _root.transform.localScale = Vector3.one * 0.0008f;
+            _root.AddComponent<GraphicRaycaster>();
+            _root.AddComponent<TrackedDeviceGraphicRaycaster>();
+
+            var bg = new GameObject("Background", typeof(RectTransform)).AddComponent<Image>();
+            bg.transform.SetParent(_root.transform, false);
+            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.92f);
+            UiBuilder.Stretch(bg.rectTransform);
+
+            var content = new GameObject("Content", typeof(RectTransform));
+            content.transform.SetParent(_root.transform, false);
+            UiBuilder.Stretch((RectTransform)content.transform);
+            var layout = content.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(22, 22, 16, 16);
+            layout.spacing = 10f;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
+
+            _title = UiBuilder.AddText(content.transform, "", 25f,
+                FontStyles.Bold, TextAlignmentOptions.Left);
+            _text = UiBuilder.AddText(content.transform, "", 19f,
+                FontStyles.Normal, TextAlignmentOptions.TopLeft);
+            _text.gameObject.AddComponent<LayoutElement>().preferredHeight = 200f;
+            var buttons = UiBuilder.AddButtonRow(content.transform,
+                ("Weiter", () => { Haptics.TickRight(); Advance(); }),
+                ("Überspringen", Finish));
+            _nextLabel = buttons[0];
+        }
+    }
+}

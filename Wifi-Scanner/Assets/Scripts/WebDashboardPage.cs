@@ -1,0 +1,521 @@
+namespace WifiScanner
+{
+    /// <summary>
+    /// The self-contained HTML/JS page served by <see cref="WebDashboardServer"/>.
+    /// No external resources (works offline on the Quest's WLAN). A live canvas-2D
+    /// dashboard mirroring the PC viewer: RSSI heatmap, head marker, rooms with
+    /// door/window openings, AP fix, ping nodes and spatial notes, a storey filter,
+    /// layer toggles and a scan-download panel.
+    ///
+    /// Written with single quotes throughout so it needs no escaping inside the
+    /// C# verbatim string.
+    /// </summary>
+    public static class WebDashboardPage
+    {
+        public const string Html = @"
+<!doctype html>
+<html lang='de'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>WiFi-Scanner Dashboard</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:#0d0f13; color:#e6e6e6;
+         display:flex; height:100vh; overflow:hidden; }
+  #side { width:260px; flex:0 0 260px; padding:12px; overflow-y:auto;
+          background:#15181f; border-right:1px solid #262b34; }
+  #main { flex:1; position:relative; }
+  canvas { width:100%; height:100%; display:block; background:#0d0f13; }
+  h1 { font-size:15px; margin:0 0 10px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#8a93a6;
+       margin:16px 0 6px; }
+  label { display:block; font-size:13px; margin:3px 0; cursor:pointer; }
+  select, button { width:100%; padding:6px; margin:3px 0; background:#232833; color:#e6e6e6;
+          border:1px solid #333b48; border-radius:6px; font-size:13px; cursor:pointer; }
+  button:hover { background:#2c3340; }
+  #status { font-size:12px; margin-bottom:8px; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; }
+  #stats { font-size:12px; color:#aeb6c4; white-space:pre-line; }
+  #files a { display:block; font-size:12px; color:#6cc0ff; text-decoration:none;
+             padding:2px 0; word-break:break-all; }
+  #files a:hover { text-decoration:underline; }
+  .sz { color:#6b7280; }
+</style>
+</head>
+<body>
+<div id='side'>
+  <h1>WiFi-Scanner</h1>
+  <div id='status'><span class='dot' style='background:#c0392b'></span>getrennt</div>
+  <div id='stats'></div>
+
+  <h2>Ansicht</h2>
+  <select id='mode'>
+    <option value='points'>Messpunkte</option>
+    <option value='heat'>Heatmap (interpoliert)</option>
+    <option value='3d'>3D-R&auml;ume (Etagen-Stapel)</option>
+  </select>
+
+  <h2>Etage</h2>
+  <select id='floor'><option value='all'>Alle</option></select>
+
+  <h2>Ebenen</h2>
+  <label><input type='checkbox' id='l_points' checked> Messpunkte</label>
+  <label><input type='checkbox' id='l_trail' checked> Laufpfad</label>
+  <label><input type='checkbox' id='l_rooms' checked> R&auml;ume</label>
+  <label><input type='checkbox' id='l_pose' checked> Position</label>
+  <label><input type='checkbox' id='l_ap' checked> AP-Standort</label>
+  <label><input type='checkbox' id='l_ping' checked> Pings</label>
+  <label><input type='checkbox' id='l_notes' checked> Notizen</label>
+
+  <h2>Scans herunterladen</h2>
+  <button id='btnExport'>Aktuellen Scan exportieren</button>
+  <button id='btnZip'>Alle als ZIP</button>
+  <div id='files'></div>
+</div>
+<div id='main'><canvas id='c'></canvas></div>
+
+<script>
+const S = { points:[], pose:null, rooms:[], apfix:null, pings:[], notes:[], drills:[], trail:[] };
+const L = { points:true, trail:true, rooms:true, pose:true, ap:true, ping:true, notes:true };
+let mode = 'points';
+let floorSel = 'all';
+let gridYaw = 0; // radians; aligns the map like the in-headset minimap
+const floorsSeen = new Set();
+
+const cv = document.getElementById('c');
+const cx = cv.getContext('2d');
+const statusEl = document.getElementById('status');
+const statsEl = document.getElementById('stats');
+
+for (const k in L) {
+  const el = document.getElementById('l_' + k);
+  if (el) el.addEventListener('change', () => { L[k] = el.checked; draw(); });
+}
+document.getElementById('mode').addEventListener('change', e => { mode = e.target.value; draw(); });
+document.getElementById('floor').addEventListener('change', e => { floorSel = e.target.value; draw(); });
+document.getElementById('btnExport').addEventListener('click', () => {
+  fetch('/export').then(() => setTimeout(loadFiles, 1500));
+});
+document.getElementById('btnZip').addEventListener('click', () => { location.href = '/download-all'; });
+
+function resize() { cv.width = cv.clientWidth; cv.height = cv.clientHeight; draw(); }
+window.addEventListener('resize', resize);
+
+function connect() {
+  const ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.onopen = () => { statusEl.innerHTML = `<span class='dot' style='background:#27ae60'></span>verbunden`; };
+  ws.onclose = () => {
+    statusEl.innerHTML = `<span class='dot' style='background:#c0392b'></span>getrennt`;
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = ev => { try { handle(JSON.parse(ev.data)); } catch (e) {} };
+}
+
+function handle(m) {
+  if (!m.type) { addPoint(m); draw(); return; }
+  if (m.gridYawDegrees !== undefined) gridYaw = m.gridYawDegrees * Math.PI / 180;
+  switch (m.type) {
+    case 'samplebatch': (m.items || []).forEach(addPoint); break;
+    case 'pose': {
+      S.pose = m;
+      const t = S.trail, last = t[t.length - 1];
+      if (!last || Math.hypot(m.posX - last.x, m.posZ - last.z) > 0.2) {
+        t.push({ x: m.posX, z: m.posZ });
+        if (t.length > 800) t.shift();
+      }
+      break;
+    }
+    case 'rooms': S.rooms = m.rooms || []; break;
+    case 'apfix': S.apfix = m; break;
+    case 'ping': S.pings = m.nodes || []; break;
+    case 'notes': S.notes = m.notes || []; break;
+    case 'drill': S.drills = m.lines || []; break;
+    case 'clear': S.points = []; break;
+  }
+  draw();
+}
+
+function addPoint(s) {
+  const f = s.floor || 0;
+  S.points.push({ x: s.posX, y: s.posY || 0, z: s.posZ, r: s.rssiDbm, f: f });
+  if (S.points.length > 8000) S.points.shift();
+  if (!floorsSeen.has(f)) {
+    floorsSeen.add(f);
+    const sel = document.getElementById('floor');
+    const o = document.createElement('option');
+    o.value = f; o.textContent = f === 0 ? 'EG' : 'OG' + f;
+    sel.appendChild(o);
+  }
+}
+
+function rssiColor(r) {
+  let t = (r - (-90)) / ((-40) - (-90));
+  t = Math.max(0, Math.min(1, t));
+  let cr, cg;
+  if (t < 0.5) { cr = 220; cg = Math.round(60 + t * 2 * 160); }
+  else { cr = Math.round(220 - (t - 0.5) * 2 * 180); cg = 200; }
+  return `rgb(${cr},${cg},70)`;
+}
+
+function activePoints() {
+  return floorSel === 'all' ? S.points : S.points.filter(p => String(p.f) === String(floorSel));
+}
+
+// World XZ -> grid space (rotated by -gridYaw), matching the minimap so walls
+// come out axis-aligned. Mirrors FloorHeatmapRenderer.WorldToMapXZ.
+function gr(x, z) {
+  const c = Math.cos(gridYaw), s = Math.sin(gridYaw);
+  return [x * c - z * s, x * s + z * c];
+}
+function P(x, z) { const g = gr(x, z); return [sx(g[0]), sy(g[1])]; }
+
+let T = { minx:0, minz:0, scale:1, cw:0, ch:0 };
+function computeTransform(pts) {
+  let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
+  const add = (x, z) => { const g = gr(x, z); if (g[0] < minx) minx = g[0]; if (g[0] > maxx) maxx = g[0]; if (g[1] < minz) minz = g[1]; if (g[1] > maxz) maxz = g[1]; };
+  pts.forEach(p => add(p.x, p.z));
+  if (L.rooms) S.rooms.forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
+  if (minx > maxx) { minx = -2; maxx = 2; minz = -2; maxz = 2; }
+  const pad = 0.6;
+  minx -= pad; maxx += pad; minz -= pad; maxz += pad;
+  const cw = cv.width, ch = cv.height;
+  const scale = Math.min(cw / (maxx - minx), ch / (maxz - minz));
+  T = { minx, minz, scale, ox: (cw - (maxx - minx) * scale) / 2, oy: (ch - (maxz - minz) * scale) / 2, ch };
+}
+function sx(x) { return (x - T.minx) * T.scale + T.ox; }
+function sy(z) { return T.ch - ((z - T.minz) * T.scale + T.oy); }
+
+function draw() {
+  const pts = activePoints();
+  if (mode === '3d') {
+    cx.clearRect(0, 0, cv.width, cv.height);
+    draw3d(pts);
+    updateStats(pts.length);
+    return;
+  }
+  computeTransform(pts);
+  cx.clearRect(0, 0, cv.width, cv.height);
+
+  if (mode === 'heat') drawHeatmap(pts);
+  else if (L.points) pts.forEach(p => {
+    cx.fillStyle = rssiColor(p.r);
+    const q = P(p.x, p.z);
+    cx.fillRect(q[0] - 3, q[1] - 3, 6, 6);
+  });
+
+  if (L.trail) drawTrail();
+  if (L.rooms) S.rooms.forEach(drawRoom);
+  if (L.ping) S.pings.forEach(drawPing);
+  if (L.notes) S.notes.forEach(drawNote);
+  if (L.ap && S.apfix) drawAp(S.apfix);
+  if (L.pose && S.pose) drawPose(S.pose);
+
+  updateStats(pts.length);
+}
+
+// Client-side IDW heatmap (power 2), same idea as the in-app floor heatmap:
+// a coarse grid in grid-space, each cell the inverse-distance-weighted RSSI of
+// nearby points; cells with no measurement within R stay empty (gap).
+function drawHeatmap(pts) {
+  if (!pts.length) return;
+  const gp = pts.map(p => { const g = gr(p.x, p.z); return { x: g[0], z: g[1], r: p.r }; });
+  let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
+  gp.forEach(p => { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; if (p.z < minz) minz = p.z; if (p.z > maxz) maxz = p.z; });
+  const R = 1.2, R2 = R * R;
+  const area = Math.max(0.5, maxx - minx) * Math.max(0.5, maxz - minz);
+  const cell = Math.max(0.15, Math.sqrt(area / 18000));
+  const hash = new Map();
+  const key = (cx2, cz2) => cx2 + ',' + cz2;
+  gp.forEach(p => {
+    const k = key(Math.floor(p.x / R), Math.floor(p.z / R));
+    let a = hash.get(k); if (!a) { a = []; hash.set(k, a); } a.push(p);
+  });
+  const nx = Math.ceil((maxx - minx) / cell), nz = Math.ceil((maxz - minz) / cell);
+  const cs = cell * T.scale + 1;
+  for (let iz = 0; iz < nz; iz++) {
+    const wz = minz + (iz + 0.5) * cell, hz = Math.floor(wz / R);
+    for (let ix = 0; ix < nx; ix++) {
+      const wx = minx + (ix + 0.5) * cell, hx = Math.floor(wx / R);
+      let wsum = 0, vsum = 0;
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const a = hash.get(key(hx + dx, hz + dz)); if (!a) continue;
+        for (const p of a) {
+          const ddx = p.x - wx, ddz = p.z - wz, sq = ddx * ddx + ddz * ddz;
+          if (sq > R2) continue;
+          const w = 1 / (sq + 0.01); wsum += w; vsum += w * p.r;
+        }
+      }
+      if (wsum <= 0) continue;
+      cx.fillStyle = rssiColor(vsum / wsum);
+      cx.fillRect(sx(wx) - cs / 2, sy(wz) - cs / 2, cs, cs);
+    }
+  }
+}
+
+function drawTrail() {
+  if (S.trail.length < 2) return;
+  cx.strokeStyle = '#ff9d3c';
+  cx.lineWidth = 2;
+  cx.beginPath();
+  const p0 = P(S.trail[0].x, S.trail[0].z);
+  cx.moveTo(p0[0], p0[1]);
+  for (let i = 1; i < S.trail.length; i++) {
+    const q = P(S.trail[i].x, S.trail[i].z);
+    cx.lineTo(q[0], q[1]);
+  }
+  cx.stroke();
+}
+
+function drawRoom(room) {
+  const c = room.cornersXZ || [];
+  const n = c.length;
+  if (n < 2) return;
+  const ops = room.openings || [];
+  cx.strokeStyle = '#5aa0d8';
+  cx.lineWidth = 2;
+  for (let i = 0; i < n; i++) {
+    const a = c[i], b = c[(i + 1) % n];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const eops = ops.filter(o => o.edgeIndex === i).sort((p, q) => p.startAlong - q.startAlong);
+    let cur = 0;
+    const seg = (f0, f1) => {
+      const p0 = P(a.x + (b.x - a.x) * f0, a.y + (b.y - a.y) * f0);
+      const p1 = P(a.x + (b.x - a.x) * f1, a.y + (b.y - a.y) * f1);
+      cx.beginPath();
+      cx.moveTo(p0[0], p0[1]);
+      cx.lineTo(p1[0], p1[1]);
+      cx.stroke();
+    };
+    for (const o of eops) {
+      const s0 = Math.max(cur, Math.min(1, o.startAlong / len));
+      const e0 = Math.min(1, o.endAlong / len);
+      if (s0 > cur) seg(cur, s0);
+      drawOpening(a, b, s0, e0, o.isDoor);
+      cur = Math.max(cur, e0);
+    }
+    if (cur < 1) seg(cur, 1);
+  }
+}
+
+function drawOpening(a, b, f0, f1, isDoor) {
+  const mx = a.x + (b.x - a.x) * (f0 + f1) / 2;
+  const mz = a.y + (b.y - a.y) * (f0 + f1) / 2;
+  const q = P(mx, mz);
+  cx.fillStyle = isDoor ? '#e08a3c' : '#e0c53c';
+  cx.beginPath();
+  cx.arc(q[0], q[1], 4, 0, 7);
+  cx.fill();
+}
+
+function drawPose(p) {
+  const q = P(p.posX, p.posZ);
+  const a = p.yawDeg * Math.PI / 180;
+  // Heading tip in world, projected through the same grid rotation.
+  const tip = P(p.posX + Math.sin(a) * 0.6, p.posZ + Math.cos(a) * 0.6);
+  cx.fillStyle = '#25b7dd';
+  cx.beginPath(); cx.arc(q[0], q[1], 6, 0, 7); cx.fill();
+  cx.strokeStyle = '#25b7dd'; cx.lineWidth = 3;
+  cx.beginPath(); cx.moveTo(q[0], q[1]); cx.lineTo(tip[0], tip[1]); cx.stroke();
+}
+
+function drawAp(ap) {
+  const q = P(ap.posX, ap.posZ);
+  cx.fillStyle = '#00d2ff';
+  star(q[0], q[1], 5, 11, 5);
+  label((ap.ssid || 'AP') + ' (' + ap.rssi + ' dBm)', q[0], q[1] - 16, '#00d2ff');
+}
+
+function drawPing(p) {
+  const q = P(p.posX, p.posZ);
+  const ms = p.latencyMs;
+  cx.fillStyle = ms < 0 ? '#cc2222' : ms < 50 ? '#22bb44' : ms < 120 ? '#e6b800' : '#cc5522';
+  cx.beginPath(); cx.arc(q[0], q[1], 6, 0, 7); cx.fill();
+  label(ms < 0 ? 'Fehler' : ms + ' ms', q[0], q[1] - 12, '#ddd');
+}
+
+function drawNote(nt) {
+  const q = P(nt.posX, nt.posZ);
+  cx.fillStyle = nt.type === 'VirtualAp' ? '#25b7dd' : nt.type === 'Interference' ? '#dd4433' : '#cccccc';
+  cx.fillRect(q[0] - 5, q[1] - 5, 10, 10);
+  if (nt.text) label(nt.text, q[0], q[1] - 12, '#ddd');
+}
+
+function star(x, y, ri, ro, pts) {
+  cx.beginPath();
+  for (let i = 0; i < pts * 2; i++) {
+    const r = i % 2 ? ri : ro;
+    const a = Math.PI * i / pts - Math.PI / 2;
+    const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+    i ? cx.lineTo(px, py) : cx.moveTo(px, py);
+  }
+  cx.closePath(); cx.fill();
+}
+
+function label(text, x, y, color) {
+  cx.font = '12px system-ui';
+  cx.textAlign = 'center';
+  const w = cx.measureText(text).width + 8;
+  cx.fillStyle = 'rgba(0,0,0,0.6)';
+  cx.fillRect(x - w / 2, y - 12, w, 15);
+  cx.fillStyle = color;
+  cx.fillText(text, x, y);
+}
+
+// ---- 3D view: all storeys' extruded rooms stacked, orbit by dragging ----
+let yaw3 = 0.8, pitch3 = 0.5, zoom3 = 1;
+const roomPalette = ['#5aa0d8', '#7cd85a', '#d8a05a', '#c05ad8', '#5ad8c8', '#d85a6e'];
+
+function bounds3(pts) {
+  let n = 0, sx3 = 0, sy3 = 0, sz3 = 0, ext = 1;
+  const acc = (x, y, z) => { sx3 += x; sy3 += y; sz3 += z; n++; };
+  S.rooms.forEach(r => {
+    const h = (r.height && r.height > 0.05) ? r.height : 2.5;
+    (r.cornersXZ || []).forEach(c => { acc(c.x, r.floorY || 0, c.y); acc(c.x, (r.floorY || 0) + h, c.y); });
+  });
+  pts.forEach(p => acc(p.x, p.y, p.z));
+  if (!n) return { x: 0, y: 0, z: 0, ext: 3 };
+  const ctr = { x: sx3 / n, y: sy3 / n, z: sz3 / n };
+  const d2 = (x, y, z) => Math.max(Math.abs(x - ctr.x), Math.abs(y - ctr.y), Math.abs(z - ctr.z));
+  S.rooms.forEach(r => {
+    const h = (r.height && r.height > 0.05) ? r.height : 2.5;
+    (r.cornersXZ || []).forEach(c => { ext = Math.max(ext, d2(c.x, r.floorY || 0, c.y), d2(c.x, (r.floorY || 0) + h, c.y)); });
+  });
+  pts.forEach(p => { ext = Math.max(ext, d2(p.x, p.y, p.z)); });
+  ctr.ext = ext;
+  return ctr;
+}
+
+function draw3d(pts) {
+  const ctr = bounds3(pts);
+  const scale3 = Math.min(cv.width, cv.height) * 0.42 / ctr.ext * zoom3;
+  const cyaw = Math.cos(yaw3), syaw = Math.sin(yaw3);
+  const cp = Math.cos(pitch3), sp = Math.sin(pitch3);
+  const V = (x, y, z) => {
+    const dx = x - ctr.x, dy = y - ctr.y, dz = z - ctr.z;
+    const rx = dx * cyaw - dz * syaw;
+    const rz = dx * syaw + dz * cyaw;
+    const ry = dy * cp - rz * sp;
+    return [cv.width / 2 + rx * scale3, cv.height / 2 - ry * scale3];
+  };
+
+  // Measurement points as small colour cubes at their true height.
+  if (L.points) pts.forEach(p => {
+    const q = V(p.x, p.y, p.z);
+    cx.fillStyle = rssiColor(p.r);
+    cx.fillRect(q[0] - 2, q[1] - 2, 4, 4);
+  });
+
+  // Rooms: base + top loop + verticals; colour rotates per room.
+  S.rooms.forEach((r, ri) => {
+    const c = r.cornersXZ || [];
+    if (c.length < 3) return;
+    const y0 = r.floorY || 0;
+    const h = (r.height && r.height > 0.05) ? r.height : 2.5;
+    cx.strokeStyle = roomPalette[ri % roomPalette.length];
+    cx.lineWidth = 1.6;
+    const loop = (yy) => {
+      cx.beginPath();
+      for (let i = 0; i <= c.length; i++) {
+        const p = c[i % c.length];
+        const q = V(p.x, yy, p.y);
+        i ? cx.lineTo(q[0], q[1]) : cx.moveTo(q[0], q[1]);
+      }
+      cx.stroke();
+    };
+    loop(y0);
+    loop(y0 + h);
+    for (const p of c) {
+      const a = V(p.x, y0, p.y), b = V(p.x, y0 + h, p.y);
+      cx.beginPath(); cx.moveTo(a[0], a[1]); cx.lineTo(b[0], b[1]); cx.stroke();
+    }
+  });
+
+  if (L.ap && S.apfix) {
+    const q = V(S.apfix.posX, S.apfix.posY, S.apfix.posZ);
+    cx.fillStyle = '#00d2ff';
+    star(q[0], q[1], 5, 11, 5);
+    label((S.apfix.ssid || 'AP'), q[0], q[1] - 16, '#00d2ff');
+  }
+  if (L.pose && S.pose) {
+    const q = V(S.pose.posX, S.pose.posY || 1.6, S.pose.posZ);
+    cx.fillStyle = '#25b7dd';
+    cx.beginPath(); cx.arc(q[0], q[1], 5, 0, 7); cx.fill();
+  }
+
+  label('Ziehen = drehen, Rad/Pinch = Zoom', cv.width / 2, cv.height - 8, '#8a93a6');
+}
+
+// Orbit input: mouse drag / one-finger drag rotates, wheel zooms.
+let dragging = false, lastX = 0, lastY = 0, lastPinch = 0;
+cv.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', () => { dragging = false; });
+window.addEventListener('mousemove', e => {
+  if (!dragging || mode !== '3d') return;
+  yaw3 += (e.clientX - lastX) * 0.008;
+  pitch3 = Math.max(0.05, Math.min(1.5, pitch3 + (e.clientY - lastY) * 0.006));
+  lastX = e.clientX; lastY = e.clientY;
+  draw();
+});
+cv.addEventListener('wheel', e => {
+  if (mode !== '3d') return;
+  e.preventDefault();
+  zoom3 = Math.max(0.3, Math.min(6, zoom3 * (e.deltaY < 0 ? 1.1 : 0.9)));
+  draw();
+}, { passive: false });
+cv.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) { lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; }
+  else if (e.touches.length === 2) lastPinch = Math.hypot(
+    e.touches[0].clientX - e.touches[1].clientX,
+    e.touches[0].clientY - e.touches[1].clientY);
+}, { passive: true });
+cv.addEventListener('touchmove', e => {
+  if (mode !== '3d') return;
+  if (e.touches.length === 1) {
+    yaw3 += (e.touches[0].clientX - lastX) * 0.008;
+    pitch3 = Math.max(0.05, Math.min(1.5, pitch3 + (e.touches[0].clientY - lastY) * 0.006));
+    lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+  } else if (e.touches.length === 2) {
+    const d = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY);
+    if (lastPinch > 0) zoom3 = Math.max(0.3, Math.min(6, zoom3 * d / lastPinch));
+    lastPinch = d;
+  }
+  e.preventDefault();
+  draw();
+}, { passive: false });
+
+function updateStats(shown) {
+  const last = S.points[S.points.length - 1];
+  statsEl.textContent =
+    'Punkte: ' + S.points.length + ' (angezeigt ' + shown + ')\n' +
+    'R&auml;ume: ' + S.rooms.length + '   Pings: ' + S.pings.length + '\n' +
+    'Notizen: ' + S.notes.length +
+    (last ? '\nLetzte: ' + last.r + ' dBm' : '');
+}
+
+function loadFiles() {
+  fetch('/scans').then(r => r.json()).then(d => {
+    const box = document.getElementById('files');
+    box.innerHTML = '';
+    (d.files || []).sort((a, b) => a.name.localeCompare(b.name)).forEach(f => {
+      const a = document.createElement('a');
+      a.href = '/download?f=' + encodeURIComponent(f.name);
+      a.innerHTML = f.name + ` <span class='sz'>(${(f.size / 1024).toFixed(0)} kB)</span>`;
+      box.appendChild(a);
+    });
+    if (!(d.files || []).length) box.textContent = '(keine Dateien)';
+  }).catch(() => {});
+}
+
+resize();
+connect();
+loadFiles();
+setInterval(loadFiles, 10000);
+</script>
+</body>
+</html>";
+    }
+}

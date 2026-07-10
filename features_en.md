@@ -26,8 +26,8 @@ Thanks to the revolutionary Depth API of the Quest 3, the virtual data blends pe
 
 ### Orientation & Navigation
 Keep track even in large buildings:
-* **Interactive Wrist Minimap:** There is a live map on your right wrist. It shows the completely measured area (floor heatmap), your current position as an arrow, and your viewing direction. The map grows automatically as you explore more area.
-* **Live HUD (Heads-Up Display):** On the left wrist, you have all important real-time parameters at a glance: Current network (SSID), signal strength (RSSI in dBm), number of measurement points, and recording status.
+* **Interactive Wrist Minimap:** There is a live map on your right wrist. It shows the completely measured area (floor heatmap), your current position as an arrow, and your viewing direction. The map grows automatically as you explore more area. Right below it: the most important real-time values (network/SSID, RSSI in dBm, measurement points, recording status) at a glance.
+* **Tool Palette on the Left Wrist:** A quick glance at your left hand is all it takes — a tappable palette holds every tool (room tracing, doors/windows, drill planning, distance measuring, notes, ping test, delete, scan alignment). The active tool lights up and a short usage hint is shown right on your wrist — without ever opening the main menu.
 
 ### Architecture Tools: Room Tracer
 Create scaled floor plans directly in AR:
@@ -38,7 +38,7 @@ Create scaled floor plans directly in AR:
 ### Precision Tools & Controls
 * **Wall Calibration (Grid Align):** Align the heatmap grid parallel to your real walls with just a few clicks, so that the exported maps are perfectly straight.
 * **RSSI Filter:** Only looking for dead zones? Simply hide strong signals using a slider and only show values below e.g. -75 dBm.
-* **Floating Control Panel:** A virtual tablet floating in front of you. Here you control opacity, view modes, export names (via system keyboard), and start/stop recording.
+* **Floating Control Panel:** A compact virtual tablet floating in front of you — neatly organized into four tabs (Recording / View / Rooms / System). Here you control opacity, view modes, filters, storeys, export names (via system keyboard), and start/stop recording.
 
 ### Comprehensive Data Export
 When the scan is complete, the data doesn't stay in the headset. Save your measurement results locally on the Quest and easily pull them to your computer using a PC script (`pull_scans.ps1`):

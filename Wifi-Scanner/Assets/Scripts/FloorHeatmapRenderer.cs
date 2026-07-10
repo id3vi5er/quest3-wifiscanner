@@ -27,6 +27,9 @@ namespace WifiScanner
     {
         [Header("Data source")]
         public SampleCollector collector;
+        [Tooltip("Optional: multi-storey manager. The heatmap shows the active " +
+                 "storey only (single plane) at that storey's base height.")]
+        public FloorManager floorManager;
 
         [Header("Material (URP Unlit asset, transparent)")]
         public Material floorMaterial;
@@ -77,14 +80,20 @@ namespace WifiScanner
         private float _floorY;
         private float _timer;
         private int _lastRevision = -1;
+        private int _lastFloorVersion = -1;
         private bool _rebuilding;
         private bool _warnedNoMaterial;
+        private bool _hasFloorOverride;
+        private float _floorOverrideY;
         // Whether the floor quad should be shown (view mode). Deliberately
         // decoupled from this component being active: the interpolation keeps
         // running in every view mode so the minimap and PNG export stay fresh.
         private bool _quadVisible = true;
         private int _filterMinDbm = -127;
         private int _filterMaxDbm = 0;
+        // Diff view: loaded reference scan + its field on the current grid.
+        private System.Collections.Generic.List<Sample> _diffSamples;
+        private float[] _refCellRssi;
 
         private static readonly int BaseMapId = Shader.PropertyToID("_BaseMap");
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
@@ -162,9 +171,44 @@ namespace WifiScanner
         /// </summary>
         private float ResolveFloorY(float minSampleY)
         {
+            if (_hasFloorOverride)
+                return _floorOverrideY + floorOffset;
+            // Multi-storey: each storey has its own base plane.
+            if (floorManager != null && floorManager.Floors.Count > 0)
+                return floorManager.ActiveBaseY + floorOffset;
             if (TryGetTrackedFloorY(_xrOrigin, out float floorY))
                 return floorY + floorOffset;
             return minSampleY - 1.2f + floorOffset;
+        }
+
+        /// <summary>Manually calibrated floor height (controller held to the
+        /// floor, see RoomTracer) — overrides the tracked origin, shared by
+        /// heatmap placement and room tracing. Triggers a rebuild.</summary>
+        public void SetFloorOverride(float y)
+        {
+            // With multiple storeys, correct the ACTIVE storey's base instead of
+            // a single global override (so each floor keeps its own plane).
+            if (floorManager != null && floorManager.Floors.Count > 0)
+                floorManager.SetActiveBaseY(y);
+            else
+            {
+                _floorOverrideY = y;
+                _hasFloorOverride = true;
+            }
+            _lastRevision = -1;
+            _timer = updateInterval;
+        }
+
+        /// <summary>Best known floor height: manual override, else the
+        /// floor-based tracking origin. False if neither exists (Editor).</summary>
+        public bool TryGetFloorY(out float y)
+        {
+            if (_hasFloorOverride)
+            {
+                y = _floorOverrideY;
+                return true;
+            }
+            return TryGetTrackedFloorY(_xrOrigin, out y);
         }
 
         /// <summary>
@@ -195,6 +239,14 @@ namespace WifiScanner
         private void Update()
         {
             if (collector == null || _rebuilding || !EnsureMaterial()) return;
+
+            // A storey switch forces a rebuild even without new data.
+            if (floorManager != null && floorManager.Version != _lastFloorVersion)
+            {
+                _lastFloorVersion = floorManager.Version;
+                _lastRevision = -1;
+                _timer = updateInterval;
+            }
 
             _timer += Time.deltaTime;
             if (_timer < updateInterval) return;
@@ -230,105 +282,78 @@ namespace WifiScanner
             Colorize();
         }
 
+        /// <summary>True while the diff view (current − reference) is showing.</summary>
+        public bool DiffEnabled => _diffSamples != null;
+        /// <summary>Stem of the loaded diff reference ("" when disabled).</summary>
+        public string DiffStem { get; private set; } = "";
+
+        /// <summary>
+        /// Enables the diff view against a loaded reference scan (pass null to
+        /// disable): cells show current − reference in a red↔grey↔green ramp
+        /// (±20 dB). The reference must have been aligned to the current
+        /// tracking origin (ScanAligner) to be meaningful.
+        /// </summary>
+        public void SetDiffReference(string stem, System.Collections.Generic.List<Sample> samples)
+        {
+            _diffSamples = samples;
+            DiffStem = samples != null ? (stem ?? "") : "";
+            _refCellRssi = null;
+            _lastRevision = -1; // force a rebuild
+            _timer = updateInterval;
+        }
+
+        // Result of one IDW interpolation pass (grid-space georeference).
+        private class FieldResult
+        {
+            public bool ok;
+            public float[] cellRssi;
+            public Vector2 worldMin; // XZ of texel (0,0) corner, grid space
+            public float cell;
+            public int w, h;
+            public float minSampleY;
+        }
+
         private IEnumerator Rebuild()
         {
             _rebuilding = true;
             _lastRevision = collector.DataRevision;
 
-            // --- Snapshot the samples (the list only grows / updates in place) ---
-            var samples = collector.Samples;
-            int n = samples.Count;
-            var px = new float[n];
-            var pz = new float[n];
-            var prssi = new float[n];
-            float minX = float.MaxValue, maxX = float.MinValue;
-            float minZ = float.MaxValue, maxZ = float.MinValue;
-            float minY = float.MaxValue;
-            // Everything below rasterises in GRID space (world rotated by
-            // -gridYaw); distances are rotation-invariant, so the IDW result
-            // is unchanged — only the raster axes align with the wall.
-            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYawDegrees, 0f);
-            for (int i = 0; i < n; i++)
-            {
-                var s = samples[i];
-                Vector3 g = worldToGrid * new Vector3(s.posX, 0f, s.posZ);
-                px[i] = g.x;
-                pz[i] = g.z;
-                prssi[i] = s.rssiDbm;
-                if (g.x < minX) minX = g.x;
-                if (g.x > maxX) maxX = g.x;
-                if (g.z < minZ) minZ = g.z;
-                if (g.z > maxZ) maxZ = g.z;
-                if (s.posY < minY) minY = s.posY;
-            }
-            minX -= padding; maxX += padding;
-            minZ -= padding; maxZ += padding;
-            _floorY = ResolveFloorY(minY);
+            // With multiple storeys the heatmap shows the active storey only —
+            // a heatmap is inherently one horizontal plane. (The AP locator, by
+            // contrast, always uses ALL samples across every floor.)
+            var result = new FieldResult();
+            var pass = ComputeField(collector.Samples, floorManager != null,
+                floorManager != null ? floorManager.ActiveIndex : 0, result);
+            while (pass.MoveNext()) yield return pass.Current;
 
-            float sizeX = Mathf.Max(maxX - minX, 0.5f);
-            float sizeZ = Mathf.Max(maxZ - minZ, 0.5f);
-            _worldCell = Mathf.Max(cellSize, sizeX / maxTextureDim, sizeZ / maxTextureDim);
-            _texW = Mathf.Max(2, Mathf.CeilToInt(sizeX / _worldCell));
-            _texH = Mathf.Max(2, Mathf.CeilToInt(sizeZ / _worldCell));
-            _worldMin = new Vector2(minX, minZ);
-
-            // --- 2D spatial hash over the samples (cell = interpolation radius) ---
-            float hashCell = maxInterpolationDistance;
-            var hash = new System.Collections.Generic.Dictionary<long,
-                System.Collections.Generic.List<int>>();
-            for (int i = 0; i < n; i++)
+            // No measurements on the active storey → nothing to draw.
+            if (!result.ok)
             {
-                long key = HashKey(Mathf.FloorToInt(px[i] / hashCell),
-                                   Mathf.FloorToInt(pz[i] / hashCell));
-                if (!hash.TryGetValue(key, out var list))
-                    hash[key] = list = new System.Collections.Generic.List<int>();
-                list.Add(i);
+                _quadGo.SetActive(false);
+                _rebuilding = false;
+                yield break;
             }
 
-            var cellRssi = new float[_texW * _texH];
-            float maxDistSqr = maxInterpolationDistance * maxInterpolationDistance;
-            int budget = Mathf.Max(256, texelsPerFrame);
+            _cellRssi = result.cellRssi;
+            _worldMin = result.worldMin;
+            _worldCell = result.cell;
+            _texW = result.w;
+            _texH = result.h;
+            _floorY = ResolveFloorY(result.minSampleY);
 
-            for (int ty = 0; ty < _texH; ty++)
+            // Diff view: rasterise the loaded reference scan onto the SAME
+            // grid so the cells subtract 1:1. NaN handling stays per cell.
+            _refCellRssi = null;
+            if (_diffSamples != null)
             {
-                float wz = _worldMin.y + (ty + 0.5f) * _worldCell;
-                int hz = Mathf.FloorToInt(wz / hashCell);
-                for (int tx = 0; tx < _texW; tx++)
-                {
-                    float wx = _worldMin.x + (tx + 0.5f) * _worldCell;
-                    int hx = Mathf.FloorToInt(wx / hashCell);
-
-                    float wSum = 0f, vSum = 0f, nearestSqr = float.MaxValue;
-                    for (int dx = -1; dx <= 1; dx++)
-                    for (int dz = -1; dz <= 1; dz++)
-                    {
-                        if (!hash.TryGetValue(HashKey(hx + dx, hz + dz), out var list))
-                            continue;
-                        foreach (int i in list)
-                        {
-                            float ddx = px[i] - wx;
-                            float ddz = pz[i] - wz;
-                            float sqr = ddx * ddx + ddz * ddz;
-                            if (sqr < nearestSqr) nearestSqr = sqr;
-                            if (sqr > maxDistSqr) continue;
-                            float w = 1f / (sqr + 0.01f); // IDW, power 2
-                            wSum += w;
-                            vSum += w * prssi[i];
-                        }
-                    }
-
-                    cellRssi[ty * _texW + tx] =
-                        nearestSqr <= maxDistSqr ? vSum / wSum : float.NaN;
-
-                    if (--budget <= 0)
-                    {
-                        budget = Mathf.Max(256, texelsPerFrame);
-                        yield return null;
-                    }
-                }
+                var refCell = new float[_texW * _texH];
+                var refPass = RasterizeSamplesOnGrid(_diffSamples,
+                    floorManager != null,
+                    floorManager != null ? floorManager.ActiveIndex : 0,
+                    _worldMin, _worldCell, _texW, _texH, refCell);
+                while (refPass.MoveNext()) yield return refPass.Current;
+                _refCellRssi = refCell;
             }
-
-            _cellRssi = cellRssi;
 
             // --- (Re)allocate texture and colourise ---
             if (_tex == null || _tex.width != _texW || _tex.height != _texH)
@@ -359,11 +384,179 @@ namespace WifiScanner
             _rebuilding = false;
         }
 
+        // IDW interpolation for one storey (or all samples when filterFloor is
+        // false), spread over frames via texelsPerFrame. Uses only locals and
+        // the result object, so an export pass can drain it synchronously even
+        // while a live Rebuild coroutine is in flight. The sample source is a
+        // parameter so the diff view can rasterise a LOADED reference scan.
+        private IEnumerator ComputeField(
+            System.Collections.Generic.IReadOnlyList<Sample> samples,
+            bool filterFloor, int floorFilter, FieldResult result)
+        {
+            // --- Snapshot the samples (the list only grows / updates in place) ---
+            int total = samples.Count;
+            var px = new float[total];
+            var pz = new float[total];
+            var prssi = new float[total];
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minZ = float.MaxValue, maxZ = float.MinValue;
+            float minY = float.MaxValue;
+            // Everything below rasterises in GRID space (world rotated by
+            // -gridYaw); distances are rotation-invariant, so the IDW result
+            // is unchanged — only the raster axes align with the wall.
+            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYawDegrees, 0f);
+            int n = 0;
+            for (int i = 0; i < total; i++)
+            {
+                var s = samples[i];
+                if (filterFloor && s.floor != floorFilter) continue;
+                Vector3 g = worldToGrid * new Vector3(s.posX, 0f, s.posZ);
+                px[n] = g.x;
+                pz[n] = g.z;
+                prssi[n] = s.rssiDbm;
+                if (g.x < minX) minX = g.x;
+                if (g.x > maxX) maxX = g.x;
+                if (g.z < minZ) minZ = g.z;
+                if (g.z > maxZ) maxZ = g.z;
+                if (s.posY < minY) minY = s.posY;
+                n++;
+            }
+
+            // No measurements on that storey → nothing to interpolate.
+            if (n == 0)
+            {
+                result.ok = false;
+                yield break;
+            }
+
+            minX -= padding; maxX += padding;
+            minZ -= padding; maxZ += padding;
+            result.minSampleY = minY;
+
+            float sizeX = Mathf.Max(maxX - minX, 0.5f);
+            float sizeZ = Mathf.Max(maxZ - minZ, 0.5f);
+            float worldCell = Mathf.Max(cellSize, sizeX / maxTextureDim, sizeZ / maxTextureDim);
+            int texW = Mathf.Max(2, Mathf.CeilToInt(sizeX / worldCell));
+            int texH = Mathf.Max(2, Mathf.CeilToInt(sizeZ / worldCell));
+            var worldMin = new Vector2(minX, minZ);
+
+            var cellRssi = new float[texW * texH];
+            var raster = RasterizeOnGrid(px, pz, prssi, n,
+                worldMin, worldCell, texW, texH, cellRssi);
+            while (raster.MoveNext()) yield return raster.Current;
+
+            result.cellRssi = cellRssi;
+            result.worldMin = worldMin;
+            result.cell = worldCell;
+            result.w = texW;
+            result.h = texH;
+            result.ok = true;
+        }
+
+        // The IDW core: rasterises pre-projected grid-space points onto a
+        // FIXED grid (shared by the live field and the diff reference).
+        private IEnumerator RasterizeOnGrid(float[] px, float[] pz, float[] prssi,
+            int n, Vector2 worldMin, float worldCell, int texW, int texH,
+            float[] cellRssi)
+        {
+            // --- 2D spatial hash over the samples (cell = interpolation radius) ---
+            float hashCell = maxInterpolationDistance;
+            var hash = new System.Collections.Generic.Dictionary<long,
+                System.Collections.Generic.List<int>>();
+            for (int i = 0; i < n; i++)
+            {
+                long key = HashKey(Mathf.FloorToInt(px[i] / hashCell),
+                                   Mathf.FloorToInt(pz[i] / hashCell));
+                if (!hash.TryGetValue(key, out var list))
+                    hash[key] = list = new System.Collections.Generic.List<int>();
+                list.Add(i);
+            }
+
+            float maxDistSqr = maxInterpolationDistance * maxInterpolationDistance;
+            int budget = Mathf.Max(256, texelsPerFrame);
+
+            for (int ty = 0; ty < texH; ty++)
+            {
+                float wz = worldMin.y + (ty + 0.5f) * worldCell;
+                int hz = Mathf.FloorToInt(wz / hashCell);
+                for (int tx = 0; tx < texW; tx++)
+                {
+                    float wx = worldMin.x + (tx + 0.5f) * worldCell;
+                    int hx = Mathf.FloorToInt(wx / hashCell);
+
+                    float wSum = 0f, vSum = 0f, nearestSqr = float.MaxValue;
+                    for (int dx = -1; dx <= 1; dx++)
+                    for (int dz = -1; dz <= 1; dz++)
+                    {
+                        if (!hash.TryGetValue(HashKey(hx + dx, hz + dz), out var list))
+                            continue;
+                        foreach (int i in list)
+                        {
+                            float ddx = px[i] - wx;
+                            float ddz = pz[i] - wz;
+                            float sqr = ddx * ddx + ddz * ddz;
+                            if (sqr < nearestSqr) nearestSqr = sqr;
+                            if (sqr > maxDistSqr) continue;
+                            float w = 1f / (sqr + 0.01f); // IDW, power 2
+                            wSum += w;
+                            vSum += w * prssi[i];
+                        }
+                    }
+
+                    cellRssi[ty * texW + tx] =
+                        nearestSqr <= maxDistSqr ? vSum / wSum : float.NaN;
+
+                    if (--budget <= 0)
+                    {
+                        budget = Mathf.Max(256, texelsPerFrame);
+                        yield return null;
+                    }
+                }
+            }
+        }
+
+        // Projects LOADED reference samples into grid space and rasterises
+        // them onto the current grid (diff view). Fills cellRssi with NaN when
+        // the reference has no samples on this storey.
+        private IEnumerator RasterizeSamplesOnGrid(
+            System.Collections.Generic.IReadOnlyList<Sample> samples,
+            bool filterFloor, int floorFilter, Vector2 worldMin, float worldCell,
+            int texW, int texH, float[] cellRssi)
+        {
+            int total = samples.Count;
+            var px = new float[total];
+            var pz = new float[total];
+            var prssi = new float[total];
+            Quaternion worldToGrid = Quaternion.Euler(0f, -gridYawDegrees, 0f);
+            int n = 0;
+            for (int i = 0; i < total; i++)
+            {
+                var s = samples[i];
+                if (filterFloor && s.floor != floorFilter) continue;
+                Vector3 g = worldToGrid * new Vector3(s.posX, 0f, s.posZ);
+                px[n] = g.x;
+                pz[n] = g.z;
+                prssi[n] = s.rssiDbm;
+                n++;
+            }
+            if (n == 0)
+            {
+                for (int i = 0; i < cellRssi.Length; i++) cellRssi[i] = float.NaN;
+                yield break;
+            }
+            var raster = RasterizeOnGrid(px, pz, prssi, n,
+                worldMin, worldCell, texW, texH, cellRssi);
+            while (raster.MoveNext()) yield return raster.Current;
+        }
+
         // Maps the cached RSSI field to pixels: gradient inside the filter range,
         // transparent outside it, grey grid pattern for unmeasured gap cells.
+        // In diff mode: current − reference in a red↔grey↔green ramp instead.
         private void Colorize()
         {
             if (_tex == null || _cellRssi == null || _pixels == null) return;
+            bool diff = _refCellRssi != null &&
+                        _refCellRssi.Length == _cellRssi.Length;
 
             for (int ty = 0; ty < _texH; ty++)
             {
@@ -373,11 +566,15 @@ namespace WifiScanner
                 {
                     int idx = ty * _texW + tx;
                     float rssi = _cellRssi[idx];
-                    if (float.IsNaN(rssi))
+                    if (float.IsNaN(rssi) || (diff && float.IsNaN(_refCellRssi[idx])))
                     {
                         float wx = _worldMin.x + (tx + 0.5f) * _worldCell;
                         bool grid = gridZ || Mathf.Repeat(wx, GapGridSpacing) < _worldCell;
                         _pixels[idx] = grid ? GapGridColor : GapColor;
+                    }
+                    else if (diff)
+                    {
+                        _pixels[idx] = DiffColor(rssi - _refCellRssi[idx]);
                     }
                     else if (rssi < _filterMinDbm || rssi > _filterMaxDbm)
                     {
@@ -396,6 +593,18 @@ namespace WifiScanner
             }
             _tex.SetPixels32(_pixels);
             _tex.Apply(false);
+        }
+
+        // Diverging ramp for the diff view: −20 dB (worse) = red, 0 = grey,
+        // +20 dB (better) = green.
+        private static Color32 DiffColor(float deltaDb)
+        {
+            float t = Mathf.Clamp(deltaDb / 20f, -1f, 1f);
+            Color c = t < 0f
+                ? Color.Lerp(new Color(0.55f, 0.55f, 0.55f), new Color(0.85f, 0.15f, 0.1f), -t)
+                : Color.Lerp(new Color(0.55f, 0.55f, 0.55f), new Color(0.1f, 0.8f, 0.25f), t);
+            return new Color32((byte)(c.r * 255f), (byte)(c.g * 255f),
+                (byte)(c.b * 255f), 255);
         }
 
         /// <summary>
@@ -459,6 +668,7 @@ namespace WifiScanner
             public float floorY;
             public float gridYawDegrees;
             public int weakDbm, strongDbm;
+            public string floorLabel;
             public string note;
         }
 
@@ -468,7 +678,11 @@ namespace WifiScanner
         /// the image congruently under the CSV/OBJ data. If the cached field is
         /// stale or missing (e.g. point-cloud-only view mode), the interpolation
         /// runs synchronously first — acceptable for a deliberate export.
-        /// Returns the PNG bytes (reused for the combined SVG), or null.
+        /// With multiple storeys, each storey with data additionally gets its
+        /// own pair ({stem}_heatmap_EG.png, _OG1.png, … + matching JSON),
+        /// interpolated offline with that storey's floor filter.
+        /// Returns the active storey's PNG bytes (reused for the combined SVG),
+        /// or null.
         /// </summary>
         public byte[] ExportPng(string stem)
         {
@@ -484,10 +698,46 @@ namespace WifiScanner
             }
             if (_cellRssi == null) return null;
 
-            var pixels = new Color32[_texW * _texH];
-            for (int i = 0; i < _cellRssi.Length; i++)
+            bool multiStorey = floorManager != null && floorManager.Floors.Count > 1;
+            string activeLabel = floorManager != null && floorManager.Floors.Count > 0
+                ? floorManager.Floors[floorManager.ActiveIndex].label
+                : "";
+
+            // Main file: the active storey's cached field (single-storey scans
+            // keep their familiar {stem}_heatmap.png name).
+            byte[] png = EncodeField(_cellRssi, _texW, _texH);
+            WriteHeatmapFiles(stem, "", png, _worldMin, _worldCell, _texW, _texH,
+                _floorY, activeLabel);
+
+            // Multi-storey: one PNG + JSON per storey with data, computed
+            // offline with that storey's filter (synchronous drain).
+            if (multiStorey)
             {
-                float rssi = _cellRssi[i];
+                for (int i = 0; i < floorManager.Floors.Count; i++)
+                {
+                    var result = new FieldResult();
+                    var pass = ComputeField(collector.Samples, true, i, result);
+                    while (pass.MoveNext()) { }
+                    if (!result.ok) continue; // no samples on that storey
+
+                    var floorLevel = floorManager.Floors[i];
+                    byte[] floorPng = EncodeField(result.cellRssi, result.w, result.h);
+                    WriteHeatmapFiles(stem, "_" + floorLevel.label, floorPng,
+                        result.worldMin, result.cell, result.w, result.h,
+                        floorLevel.baseY + floorOffset, floorLevel.label);
+                }
+            }
+            return png;
+        }
+
+        // RSSI field -> fully opaque PNG (gradient, grey = unmeasured); the
+        // RSSI display filter is deliberately NOT applied to exports.
+        private static byte[] EncodeField(float[] cellRssi, int w, int h)
+        {
+            var pixels = new Color32[w * h];
+            for (int i = 0; i < cellRssi.Length; i++)
+            {
+                float rssi = cellRssi[i];
                 if (float.IsNaN(rssi))
                 {
                     pixels[i] = new Color32(110, 110, 110, 255);
@@ -500,38 +750,45 @@ namespace WifiScanner
                 }
             }
 
-            var tex = new Texture2D(_texW, _texH, TextureFormat.RGBA32, false);
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
             tex.SetPixels32(pixels);
             tex.Apply(false);
             byte[] png = tex.EncodeToPNG();
             Destroy(tex);
+            return png;
+        }
 
+        // {stem}_heatmap{suffix}.png + .json (georeference sidecar).
+        private void WriteHeatmapFiles(string stem, string suffix, byte[] png,
+            Vector2 worldMin, float cell, int w, int h, float floorY,
+            string floorLabel)
+        {
             string dir = Application.persistentDataPath;
-            string pngPath = System.IO.Path.Combine(dir, $"{stem}_heatmap.png");
+            string pngPath = System.IO.Path.Combine(dir, $"{stem}_heatmap{suffix}.png");
             System.IO.File.WriteAllBytes(pngPath, png);
 
             var meta = new HeatmapMeta
             {
-                worldMinX = _worldMin.x,
-                worldMinZ = _worldMin.y,
-                cellSizeMeters = _worldCell,
-                width = _texW,
-                height = _texH,
-                floorY = _floorY,
+                worldMinX = worldMin.x,
+                worldMinZ = worldMin.y,
+                cellSizeMeters = cell,
+                width = w,
+                height = h,
+                floorY = floorY,
                 gridYawDegrees = gridYawDegrees,
                 weakDbm = HeatmapColorMapper.WeakDbm,
                 strongDbm = HeatmapColorMapper.StrongDbm,
+                floorLabel = floorLabel,
                 note = "pixel(x,y) center = grid(worldMinX+(x+0.5)*cell, floorY, " +
                        "worldMinZ+(y+0.5)*cell); world = rotate grid point by " +
                        "+gridYawDegrees around Y; PNG row 0 = worldMinZ edge; " +
                        "grey = unmeasured; world coords match wifi CSV posX/Y/Z",
             };
             System.IO.File.WriteAllText(
-                System.IO.Path.Combine(dir, $"{stem}_heatmap.json"),
+                System.IO.Path.Combine(dir, $"{stem}_heatmap{suffix}.json"),
                 JsonUtility.ToJson(meta, true));
 
             Debug.Log($"[FloorHeatmap] Wrote heatmap PNG to {pngPath}");
-            return png;
         }
 
         private static long HashKey(int x, int z) => ((long)x << 32) ^ (uint)z;

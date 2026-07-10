@@ -29,8 +29,6 @@ namespace WifiScanner
         public Transform headAnchor;
         public PointCloudRenderer pointCloud;
         public NetworkStreamer streamer;
-        [Tooltip("Optional: exports the scanned room mesh as OBJ next to CSV/JSON.")]
-        public RoomMeshController roomMesh;
         [Tooltip("Optional: exports the floor heatmap as PNG next to CSV/JSON.")]
         public FloorHeatmapRenderer floorHeatmap;
         [Tooltip("Optional name prefix for exports: <name>_<Datum>_<Uhrzeit>. " +
@@ -38,6 +36,20 @@ namespace WifiScanner
         public string exportName = "";
         [Tooltip("Optional: exports manually traced rooms as SVG+JSON next to CSV.")]
         public RoomTracer roomTracer;
+        [Tooltip("Optional: exports placed drill lines (SVG crosses + JSON).")]
+        public DrillPlanner drillPlanner;
+        [Tooltip("Optional: exports the estimated AP position (_apfix.json).")]
+        public ApLocator apLocator;
+        [Tooltip("Optional: exports placed latency nodes (_ping.json).")]
+        public PingTester pingTester;
+        [Tooltip("Optional: exports spatial notes (_notes.json).")]
+        public SpatialNoteManager spatialNotes;
+        [Tooltip("Optional: exports distance measurements (_measure.json).")]
+        public DistanceMeasurer distanceMeasurer;
+        [Tooltip("Optional: exports estimated wall attenuations (_walls.json).")]
+        public WallLossEstimator wallLoss;
+        [Tooltip("Optional: multi-storey manager — tags each point with its floor.")]
+        public FloorManager floorManager;
 
         [Header("Sampling")]
         [Tooltip("Minimum distance between points (m). A new point is only created " +
@@ -76,6 +88,7 @@ namespace WifiScanner
         private readonly List<int> _renderHandles = new List<int>();
         private readonly List<int> _hitCounts = new List<int>();
         private float _timeSinceLastEval;
+        private int _lastFloorVersion = -1;
 
         private void Start()
         {
@@ -86,6 +99,14 @@ namespace WifiScanner
 
         private void Update()
         {
+            // Apply active-floor changes to the point cloud filter (view storey).
+            if (floorManager != null && pointCloud != null &&
+                floorManager.Version != _lastFloorVersion)
+            {
+                _lastFloorVersion = floorManager.Version;
+                pointCloud.SetFloorFilter(floorManager.ActiveIndex, floorManager.ShowAll);
+            }
+
             // Always poll RSSI for the live readout, even when not recording.
             WifiInfo wifi = WifiReader.Read();
             if (wifi.valid)
@@ -113,14 +134,16 @@ namespace WifiScanner
         private void RecordSample(Vector3 pos, int rssi, WifiInfo wifi)
         {
             wifi.rssiDbm = rssi;
-            var sample = Sample.Create(pos, wifi);
+            // A point belongs to the storey directly below the headset.
+            int floor = floorManager != null ? floorManager.RecordingFloor(pos.y) : 0;
+            var sample = Sample.Create(pos, wifi, floor);
 
             int index = _samples.Count;
             _samples.Add(sample);
             _hitCounts.Add(1);
             AddToGrid(index, pos);
 
-            int handle = pointCloud != null ? pointCloud.AddPoint(pos, rssi) : -1;
+            int handle = pointCloud != null ? pointCloud.AddPoint(pos, rssi, floor) : -1;
             _renderHandles.Add(handle);
             DataRevision++;
 
@@ -223,6 +246,34 @@ namespace WifiScanner
             pointCloud?.Clear();
         }
 
+        /// <summary>
+        /// Replaces the whole in-memory session (session load / re-alignment).
+        /// Rebuilds the point cloud and spatial hash; samples are NOT streamed
+        /// here — the caller re-streams if needed.
+        /// </summary>
+        public void LoadSamples(IReadOnlyList<Sample> loaded)
+        {
+            StopRecording();
+            ClearAll();
+            // The pool is empty after Clear(), so raising the capacity now can
+            // never collide with existing ring-buffer handles.
+            if (pointCloud != null && loaded.Count + 1000 > pointCloud.maxPoints)
+                pointCloud.maxPoints = loaded.Count + 1000;
+            for (int i = 0; i < loaded.Count; i++)
+            {
+                var s = loaded[i];
+                var pos = new Vector3(s.posX, s.posY, s.posZ);
+                _samples.Add(s);
+                _hitCounts.Add(1);
+                AddToGrid(i, pos);
+                _renderHandles.Add(pointCloud != null
+                    ? pointCloud.AddPoint(pos, s.rssiDbm, s.floor)
+                    : -1);
+            }
+            DataRevision++; // one bump -> heatmap + AP locator rebuild once
+            Debug.Log($"[SampleCollector] {loaded.Count} Samples geladen.");
+        }
+
         /// <summary>Min/max/average RSSI over all recorded points. False if empty.</summary>
         public bool TryGetRssiStats(out int min, out int max, out float avg)
         {
@@ -246,13 +297,55 @@ namespace WifiScanner
             // Compute the stem here so the room-mesh OBJ shares it with CSV/JSON
             // and the three files load up congruently on the PC.
             string stem = fixedName ?? $"{SanitizedExportName()}_{DateTime.Now:yyyyMMdd_HHmmss}";
-            string dir = DataExporter.Export(_samples, stem);
-            if (roomMesh != null)
-                roomMesh.ExportObj(stem);
-            if (floorHeatmap != null)
-                floorHeatmap.ExportPng(stem);
+            string dir = DataExporter.Export(_samples, stem,
+                floorManager != null ? floorManager.Floors : null,
+                floorHeatmap != null ? floorHeatmap.gridYawDegrees : 0f);
+            byte[] heatmapPng = floorHeatmap != null
+                ? floorHeatmap.ExportPng(stem)
+                : null;
+            var drills = drillPlanner != null && drillPlanner.Lines.Count > 0
+                ? drillPlanner.Lines
+                : null;
             if (roomTracer != null)
-                roomTracer.ExportSvg(stem);
+                roomTracer.Export(stem, drills); // SVG + JSON + extruded OBJ
+            if (drills != null)
+                DataExporter.ExportDrillJson(drills,
+                    floorHeatmap != null ? floorHeatmap.gridYawDegrees : 0f, stem);
+
+            // New analysis tools: each writes its own JSON if it has data.
+            if (apLocator != null && apLocator.HasFix)
+                DataExporter.ExportApFixJson(apLocator.FixPosition, apLocator.FixSsid,
+                    apLocator.FixRssi, stem,
+                    apLocator.HasFit ? apLocator.FixRadius : 0f,
+                    apLocator.PathLossExponent, apLocator.PowerAt1mDbm);
+            if (pingTester != null && pingTester.Samples.Count > 0)
+                DataExporter.ExportPingJson(pingTester.Samples, stem);
+            if (spatialNotes != null && spatialNotes.Notes.Count > 0)
+                DataExporter.ExportNotesJson(spatialNotes.Notes, stem);
+            if (distanceMeasurer != null && distanceMeasurer.Measurements.Count > 0)
+                DataExporter.ExportMeasureJson(distanceMeasurer.Measurements, stem);
+            if (wallLoss != null && apLocator != null && apLocator.HasFit)
+            {
+                wallLoss.Recompute(); // fresh estimate for the export
+                if (wallLoss.Losses.Count > 0)
+                    DataExporter.ExportWallsJson(wallLoss.Losses,
+                        apLocator.PathLossExponent, apLocator.PowerAt1mDbm, stem);
+            }
+
+            // Combined view: heatmap as background, floor plan on top —
+            // both layers share the grid-space georeference.
+            if (heatmapPng != null && roomTracer != null &&
+                roomTracer.Rooms.Count > 0 &&
+                floorHeatmap.TryGetMapInfo(out Vector2 gridMin, out float cell,
+                    out int texW, out int texH))
+            {
+                DataExporter.ExportCombinedSvg(heatmapPng, gridMin, cell,
+                    texW, texH, floorHeatmap.gridYawDegrees,
+                    roomTracer.Rooms, stem, drills);
+            }
+
+            // Survey report LAST — it embeds the files written above.
+            ReportGenerator.Write(this, stem);
             return dir;
         }
 

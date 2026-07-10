@@ -106,6 +106,7 @@ namespace WifiScanner
             // parallel/perpendicular to the wall.
             float yaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
             floor.SetGridYaw(yaw);
+            Haptics.PlaceRight();
         }
 
         // ---- Line visual ----

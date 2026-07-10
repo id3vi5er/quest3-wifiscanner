@@ -40,8 +40,12 @@ namespace WifiScanner
         private readonly List<Renderer> _pool = new List<Renderer>();
         // RSSI per pool slot, so the dBm range filter can hide points later.
         private readonly List<int> _rssis = new List<int>();
+        // Storey per pool slot, for the multi-floor view filter.
+        private readonly List<int> _floors = new List<int>();
         private int _filterMinDbm = -127;
         private int _filterMaxDbm = 0;
+        private int _activeFloor = 0;
+        private bool _showAllFloors = true;
         private int _ring;
 
         private void Awake()
@@ -141,7 +145,7 @@ namespace WifiScanner
         /// passed to <see cref="UpdatePoint"/> to recolour it. Returns -1 if no
         /// material is assigned.
         /// </summary>
-        public int AddPoint(Vector3 worldPos, int rssiDbm)
+        public int AddPoint(Vector3 worldPos, int rssiDbm, int floor = 0)
         {
             if (_gradientMats == null)
             {
@@ -156,6 +160,7 @@ namespace WifiScanner
                 mr = CreatePoint();
                 _pool.Add(mr);
                 _rssis.Add(rssiDbm);
+                _floors.Add(floor);
                 handle = _pool.Count - 1;
             }
             else
@@ -163,6 +168,7 @@ namespace WifiScanner
                 handle = _ring;
                 mr = _pool[_ring];
                 _rssis[_ring] = rssiDbm;
+                _floors[_ring] = floor;
                 _ring = (_ring + 1) % maxPoints;
             }
 
@@ -170,7 +176,7 @@ namespace WifiScanner
             tr.position = worldPos;
             tr.localScale = Vector3.one * pointSize;
             mr.sharedMaterial = MaterialForRssi(rssiDbm);
-            mr.enabled = PassesFilter(rssiDbm);
+            mr.enabled = PassesFilter(handle);
             return handle;
         }
 
@@ -187,7 +193,7 @@ namespace WifiScanner
             if (mr == null) return;
             _rssis[handle] = rssiDbm;
             mr.sharedMaterial = MaterialForRssi(rssiDbm);
-            mr.enabled = PassesFilter(rssiDbm);
+            mr.enabled = PassesFilter(handle);
         }
 
         /// <summary>
@@ -199,15 +205,34 @@ namespace WifiScanner
         {
             _filterMinDbm = minDbm;
             _filterMaxDbm = maxDbm;
+            RefreshFilter();
+        }
+
+        /// <summary>Show only points on <paramref name="activeFloor"/> (unless
+        /// <paramref name="showAll"/>). Points on other storeys stay but hide.</summary>
+        public void SetFloorFilter(int activeFloor, bool showAll)
+        {
+            _activeFloor = activeFloor;
+            _showAllFloors = showAll;
+            RefreshFilter();
+        }
+
+        private void RefreshFilter()
+        {
             for (int i = 0; i < _pool.Count; i++)
             {
                 var mr = _pool[i];
-                if (mr != null) mr.enabled = PassesFilter(_rssis[i]);
+                if (mr != null) mr.enabled = PassesFilter(i);
             }
         }
 
-        private bool PassesFilter(int rssiDbm) =>
-            rssiDbm >= _filterMinDbm && rssiDbm <= _filterMaxDbm;
+        private bool PassesFilter(int handle)
+        {
+            int rssiDbm = _rssis[handle];
+            if (rssiDbm < _filterMinDbm || rssiDbm > _filterMaxDbm) return false;
+            if (!_showAllFloors && _floors[handle] != _activeFloor) return false;
+            return true;
+        }
 
         public void Clear()
         {
@@ -215,6 +240,7 @@ namespace WifiScanner
                 if (mr != null) Destroy(mr.gameObject);
             _pool.Clear();
             _rssis.Clear();
+            _floors.Clear();
             _ring = 0;
         }
 

@@ -1,63 +1,129 @@
-# Quest 3 WiFi-Heatmap
+# Quest 3 WiFi-Scanner
 
-Native Meta-Quest-3-App (Unity 6, **OpenXR + Meta-OpenXR/AR Foundation** — nicht
-das alte Meta XR SDK), die die WiFi-Signalstärke (RSSI) des **verbundenen**
-Access Points ausliest und mit der 3D-Kopfposition verknüpft. Beim
-Durchschreiten der Räume entstehen im **MR-Passthrough**:
+Native Meta-Quest-3-App (Unity 6, **OpenXR + Meta-OpenXR/AR Foundation**),
+die die WiFi-Signalstaerke (RSSI) des **verbundenen** Access Points ausliest
+und mit der 3D-Kopfposition verknuepft. Beim Durchschreiten von Raeumen
+entstehen im **MR-Passthrough**:
 
-- eine **3D-Punktwolke** (Kugeln, RdYlGn: grün = stark … rot = schwach),
-- eine **interpolierte Boden-Heatmap** (IDW) mit **Lücken-Anzeige** — noch
-  nicht vermessene Bereiche erscheinen grau gerastert,
-- optional das **Raum-Mesh** des Tiefenscans (Space Setup) als Geist-Overlay —
-  so lässt sich ein Gebäude scannen und das WiFi-Signal gemeinsam mit der
-  Geometrie analysieren.
+- eine **3D-Punktwolke** mit RSSI-Farben,
+- eine **interpolierte Boden-Heatmap** (IDW) mit grauer Luecken-Anzeige fuer
+  unvermessenes Gebiet,
+- ein **manuell gezeichneter, massstaeblicher Grundriss** inklusive Raumhoehen,
+  Tueren/Fenstern und optionalen Bohr-, Mess-, Ping- und Notiz-Markern,
+- eine **Handgelenk-Minimap** und ein **Web-Dashboard** fuer Live-Ansicht,
+  Downloads und Scan-Export im lokalen Netzwerk.
 
-> **Warum nativ und nicht WebXR?** Browser/WebXR haben keine API für die
-> WiFi-Signalstärke (die Network Information API liefert nur den Verbindungstyp,
-> nie dBm). RSSI ist nur über native Android-APIs (`WifiManager`) erreichbar.
+Die App arbeitet ohne vorherigen Meta-Space-Setup-Raumscan. Virtuelle Punkte
+und Heatmap koennen trotzdem dynamisch hinter realen Objekten verschwinden:
+Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
+
+> **Warum nativ und nicht WebXR?** Browser/WebXR haben keine API fuer
+> WiFi-RSSI in dBm. Diese Information ist nur ueber native Android-APIs
+> (`WifiManager`) erreichbar.
+
+---
+
+## Aktueller Funktionsumfang
+
+- **Live-WiFi-Messung** des verbundenen APs: RSSI, Link-Speed, Frequenz, SSID,
+  BSSID und Etage.
+- **3D-Punktwolke** mit konstanter Punktdichte: nahe Punkte werden per
+  laufendem Mittelwert aktualisiert statt dupliziert.
+- **Boden-Heatmap** pro aktiver Etage: IDW-Interpolation, Lueckenraster,
+  Deckkraft- und RSSI-Filter.
+- **Multi-Etage**: Punkte werden beim Aufnehmen einer Etage zugeordnet,
+  Etagen koennen angelegt, gewechselt und gefiltert werden.
+- **Manueller Raumzeichner**: Ecken setzen, Ecken verschieben, Raumhoehe
+  ziehen, Boden kalibrieren.
+- **Tueren/Fenster**: Wand-Oeffnungen werden in AR visualisiert, im SVG als
+  Wandluecken markiert und im OBJ als echte Loecher in den Wandflaechen
+  exportiert.
+- **Grid-Ausrichtung**: Heatmap-Raster per Zwei-Controller-Linie an eine echte
+  Wand ausrichten.
+- **Dynamische Occlusion**: Environment Depth blendet Punkte und Heatmap hinter
+  realen Objekten aus, ohne Raumscan.
+- **Minimap** am rechten Handgelenk: Heatmap, Grundriss, Kopfposition,
+  Blickrichtung, nordfest oder mit Blickrichtung rotierend.
+- **HUD** am linken Handgelenk: REC-Status, Punktzahl, RSSI, SSID, Ansicht,
+  Deckkraft und Legende.
+- **Analysewerkzeuge**: AP-Standort-Schaetzung, TCP-Latenz-Punkte,
+  raeumliche Notizen, Distanzmessung, Bohrplanung und universeller
+  Loeschmodus.
+- **Geiger-Audio**: optionales RSSI-Audiofeedback; staerkeres Signal erzeugt
+  schnellere/hoehere Blips.
+- **Session laden und ausrichten**: gespeicherte Scans koennen in der Quest
+  wieder geladen und per realer Wand auf den aktuellen Tracking-Ursprung
+  ausgerichtet werden.
+- **Live-Streaming**: UDP zu `tools/receiver.py` und eingebettetes
+  Web-Dashboard direkt von der Quest.
+
+---
 
 ## Datenausgabe
-- **Live-Heatmap** im Headset (Punktwolke + Bodenfläche, umschaltbar)
-- **CSV/JSON-Export** auf das Gerät (per `adb pull` abrufbar)
-- **PNG-Export** der Boden-Heatmap (`<stem>_heatmap.png`, volle Deckkraft,
-  grau = unvermessen) + `<stem>_heatmap.json` mit Georeferenz (Welt-Ursprung,
-  Zellgröße, Bodenhöhe) → am PC pixelgenau unter CSV/OBJ legbar
-- **OBJ-Export** des gescannten Raum-Meshes — gleicher Dateistamm und **gleiches
-  Koordinatensystem** wie die CSV-Samples → am PC deckungsgleich ladbar
-- **Live-Stream** per UDP an einen PC (`tools/receiver.py`)
+
+Beim Export schreibt die App nach `Application.persistentDataPath`:
+
+- `<stem>.csv` und `<stem>.json` mit allen Messpunkten
+- `<stem>_heatmap.png` plus `<stem>_heatmap.json` mit Georeferenz
+- `<stem>_rooms.svg` und `<stem>_rooms.json` fuer den Grundriss
+- `<stem>_rooms.obj` fuer extrudierte Raumwaende mit Tuer-/Fensterloechen
+- `<stem>_combined.svg` als kombinierte Heatmap+Grundriss-Ansicht
+- optional `<stem>_drill.json`, `<stem>_apfix.json`, `<stem>_ping.json`,
+  `<stem>_notes.json`, `<stem>_measure.json`
+- `wifi_autosave.*` als periodisch ueberschriebene Autosave-Dateien
+
+Das Haupt-JSON enthaelt inzwischen auch `floors` und `gridYawDegrees`, damit
+Scans spaeter mit Etagen und Rasterausrichtung wiederhergestellt werden
+koennen. Aktueller Restpunkt: Drill-/Ping-/Notiz-/Mess-Sidecars werden zwar
+exportiert, aber noch nicht wieder in die In-App-Session geladen.
 
 ---
 
 ## Projektstruktur
-```
+
+```text
 Wifi-Scanner/Assets/
   Scripts/
-    Sample.cs                     Datenmodell eines Messpunkts (+ CSV/JSON)
-    WifiReader.cs                 Android-WifiManager-Bridge (JNI, RSSI/SSID/…)
-    SampleCollector.cs            Orchestrator: Abtastung Position+RSSI, Glättung,
-                                  Spatial-Hash-Grid, Statistik, Export-Fassade
-    HeatmapColorMapper.cs         RSSI (dBm) -> Farbe (RdYlGn, wie receiver.py)
-    HeatmapLegend.cs              Gradient-Textur für die Farblegenden
-    PointCloudRenderer.cs         Punktwolke (gepoolte Kugeln, 48 Farbstufen,
-                                  Deckkraft + RSSI-Bereichsfilter)
-    FloorHeatmapRenderer.cs       Boden-Heatmap: IDW-Interpolation auf Textur,
-                                  Lücken-Anzeige, Deckkraft + Filter
-    VisualizationModeController.cs Ansicht: Punktwolke / Heatmap / Beides
-    RoomMeshController.cs         3D-Raumrekonstruktion (Scene Mesh) + OBJ-Export
-    ControlPanel.cs               Interaktives World-Space-Panel (XRI-Ray)
-    HudController.cs              Handgelenk-HUD (linker Controller) + Legende
-    RecordingControls.cs          Controller-Tasten (A/B/X)
-    OpacityControls.cs            L-Stick regelt Deckkraft
-    PassthroughSetup.cs           MR-Passthrough + Boundaryless zur Laufzeit
-    SceneBootstrap.cs             Erzeugt/verdrahtet ALLES zur Laufzeit
-    DataExporter.cs               CSV/JSON/OBJ-Export nach persistentDataPath
-    NetworkStreamer.cs            UDP-Live-Stream an PC
-    WifiProbe.cs                  Standalone-Gerätetest (Schritt 0)
-  PointMat.mat / FloorHeatMat.mat / RoomMeshMat.mat
-                                  URP-Unlit-Material-ASSETS (siehe Magenta-Falle)
-  Plugins/Android/AndroidManifest.xml  Permissions + benannte GameActivity
+    Sample.cs                     Messpunkt-Datenmodell (+ CSV/JSON)
+    WifiReader.cs                 Android-WifiManager-Bridge (JNI)
+    SampleCollector.cs            Aufnahme, Glaettung, Spatial Hash, Export-Fassade
+    HeatmapColorMapper.cs         RSSI -> Farbe
+    HeatmapLegend.cs              Farblegenden-Textur
+    PointCloudRenderer.cs         3D-Punktwolke, Pooling, Filter, Etagenfilter
+    FloorHeatmapRenderer.cs       Boden-Heatmap, IDW, Luecken, PNG-Export
+    VisualizationModeController.cs Punktwolke / Heatmap / Beides
+    FloorManager.cs               Etagenliste, Etagenwechsel, Etagenfilter
+    RoomTracer.cs                 Grundriss, Ecken, Raumhoehen, Bodenkalibrierung
+    OpeningTool.cs                Tueren/Fenster in gezeichneten Waenden
+    GridCalibrator.cs             Raster an Wand ausrichten
+    MinimapController.cs          Handgelenk-Minimap
+    DynamicOcclusionController.cs Environment-Depth-Occlusion
+    ControlPanel.cs               World-Space-Bedienpanel
+    HudController.cs              Handgelenk-HUD
+    RecordingControls.cs          A/B-Controller-Shortcuts
+    OpacityControls.cs            Deckkraft per Stick
+    SessionLoader.cs              Scans listen/laden/restreamen
+    ScanAligner.cs                Geladene Scans auf reale Wand ausrichten
+    GeigerCounter.cs              RSSI-Audiofeedback
+    ApLocator.cs                  AP-Standort-Schaetzung
+    PingTester.cs                 TCP-Latenz-Knoten
+    SpatialNoteManager.cs         Raeumliche Notizen
+    DistanceMeasurer.cs           Distanzmessungen
+    DrillPlanner.cs               Bohrlinien auf Raumflaechen
+    DeleteController.cs           Universeller Loeschmodus
+    WebDashboardServer.cs         Eingebetteter HTTP/WebSocket-Server
+    WebDashboardPage.cs           Self-contained Browser-Dashboard
+    DataExporter.cs               CSV/JSON/PNG/SVG/OBJ-Export und Load-APIs
+    NetworkStreamer.cs            UDP + WebDashboard-Fanout
+    PassthroughSetup.cs           MR-Passthrough + Boundaryless
+    SceneBootstrap.cs             Runtime-Erzeugung und Verdrahtung
+    WifiProbe.cs                  Standalone-WiFi-Test
+  PointMat.mat / FloorHeatMat.mat Material-Assets gegen Shader-Stripping
+  Plugins/Android/AndroidManifest.xml Permissions + GameActivity
+
 tools/
-  receiver.py                     PC-seitiger UDP-Empfänger -> wifi_live.csv
+  receiver.py                     PC-GUI fuer Live- und Offline-Ansicht
+  pull_scans.ps1                  Export-Dateien von der Quest ziehen
 ```
 
 ---
@@ -65,137 +131,263 @@ tools/
 ## Setup
 
 ### Voraussetzungen
-- **Unity 6000.0.x** mit Android Build Support (+ OpenJDK, SDK, NDK)
-- Pakete (bereits im Manifest): `com.unity.xr.openxr`, `com.unity.xr.meta-openxr`,
-  `com.unity.xr.arfoundation`, `com.unity.xr.interaction.toolkit`, `com.unity.xr.hands`
-- Quest 3 / 3s im **Developer-Mode**, USB-Debugging erlaubt
 
-### Einmalige Project Settings (nicht skriptbar)
-Project Settings → XR Plug-in Management → **OpenXR → Android**:
-Feature-Gruppe **„Meta Quest“** aktivieren und diese Features anhaken:
-1. **Meta Quest: Session** (Pflicht-Abhängigkeit)
+- Unity 6000.0.x mit Android Build Support (+ OpenJDK, SDK, NDK)
+- Pakete aus dem Manifest:
+  `com.unity.xr.openxr`, `com.unity.xr.meta-openxr`,
+  `com.unity.xr.arfoundation`, `com.unity.xr.interaction.toolkit`,
+  `com.unity.xr.hands`
+- Quest 3 / 3S im Developer Mode, USB-Debugging erlaubt
+
+### Project Settings
+
+Project Settings -> XR Plug-in Management -> **OpenXR -> Android**:
+Feature-Gruppe **Meta Quest** aktivieren und diese Features anhaken:
+
+1. **Meta Quest: Session**
 2. **Meta Quest: Camera (Passthrough)**
-3. **Meta Quest: Boundary Visibility** (Boundaryless-Modus)
-4. **Meta Quest: Meshing** (Raum-Mesh; injiziert die `USE_SCENE`-Permission
-   automatisch ins Manifest) — *in diesem Repo bereits aktiviert*
-5. **Meta Quest: Occlusion** (dynamische Tiefensensor-Occlusion) — *in diesem
-   Repo bereits aktiviert*
+3. **Meta Quest: Boundary Visibility**
+4. **Meta Quest: Meshing**
+5. **Meta Quest: Occlusion**
+
+`Meshing` bleibt aktiviert, obwohl kein statischer Raum-Mesh-Scan mehr benutzt
+wird: es sorgt fuer die `USE_SCENE`-Permission, die fuer die Depth/Occlusion-
+Pipeline benoetigt wird.
 
 ### Szene
-`Assets/Scenes/SampleScene.unity` ist fertig eingerichtet: XR Origin (XRI-
-Hands-Rig), `SceneBootstrap` (mit zugewiesenen Material-Assets), `PassthroughSetup`.
-Nur die **PC-IP** für den UDP-Stream am `SceneBootstrap` anpassen.
 
-### ⚠️ URP-Magenta-Falle
+`Assets/Scenes/SampleScene.unity` ist vorbereitet: XR Origin, `SceneBootstrap`
+mit Material-Assets und `PassthroughSetup`. Fuer UDP-Live-Streaming nur die
+PC-IP am `SceneBootstrap` oder spaeter im Bedienpanel setzen.
+
+### URP-Magenta-Falle
+
 Zur Laufzeit per `Shader.Find` erzeugte Materialien verlieren im Android-Build
-ihre Shader-Variante und rendern magenta. Deshalb sind **PointMat**,
-**FloorHeatMat** und **RoomMeshMat** echte Material-Assets (URP/Unlit) und per
-Inspector an `SceneBootstrap` gehängt — so bleiben die Varianten im Build.
+leicht ihre Shader-Variante und rendern magenta. Deshalb sind `PointMat` und
+`FloorHeatMat` echte Material-Assets und werden am `SceneBootstrap` referenziert.
 
 ---
 
 ## Bedienung
 
-Die App startet in Passthrough (Boundary aus) mit **pausierter Aufnahme** —
-Aufnahme bewusst per A-Taste oder Panel starten.
+Die App startet in Passthrough mit pausierter Aufnahme. Aufnahme wird bewusst
+per A-Taste oder Panel gestartet.
 
-**Controller:**
+### Controller
+
 | Eingabe | Funktion |
 |---|---|
 | A (rechts) | Aufnahme Pause/Weiter |
-| B (rechts) | Export (CSV + JSON + OBJ + Heatmap-PNG) |
-| L-Stick ↑/↓ | Deckkraft (Punkte + Boden-Heatmap) |
-| R-Stick ↑/↓ | Deckkraft der Minimap (unabhängig) |
-| R-Stick-Klick | Ansicht wechseln: Punktwolke → Heatmap → Beides |
-| Beide Grips (nach „Grid ausrichten“) | Kalibrierlinie zwischen den Controllern; Loslassen übernimmt |
-| Trigger / B / A (im Zeichenmodus) | Ecke setzen / Raum fertigstellen / letzte Ecke zurück — A/B-Normalbelegung pausiert solange |
-| Y (links) | Minimap am rechten Handgelenk ein-/ausblenden |
-| Menü-Taste (links) | Bedienpanel ein-/ausblenden (erscheint vor dir) |
+| B (rechts) | Export |
+| L-Stick hoch/runter | Deckkraft von Punktwolke + Heatmap |
+| R-Stick hoch/runter | Minimap-Deckkraft |
+| R-Stick-Klick | Ansicht wechseln: Punktwolke -> Heatmap -> Beides |
+| Y (links) | Minimap ein-/ausblenden |
+| Menue-Taste (links) | Bedienpanel ein-/ausblenden |
+| Beide Grips nach "Grid ausrichten" | Wand-Kalibrierlinie uebernehmen |
+| Zeichenmodus: Trigger / B / A | Ecke setzen / Raum schliessen / letzte Ecke zurueck |
 
-**Bedienpanel** (mit dem Controller-Strahl anvisieren, Trigger = Klick):
-Aufnahme/Export, **Löschen** (bewusst NUR hier, nicht auf einer
-Controller-Taste — zu hohes Fehlbedienungsrisiko), **Export-Name**
-(Textfeld, öffnet die System-Tastatur; Dateien heißen dann
-`<Name>_<Datum>_<Uhrzeit>.…`, leer = `wifi_…`), Ansichtsmodus, **„Raum scannen“** (öffnet das
-System-Space-Setup), Raum-Mesh-Modus **aus → Geist → verdeckt** (verdeckt =
-Occlusion: reale Wände/Möbel aus dem Raum-Scan verbergen Punkte und Heatmap
-dahinter — man sieht nur die Daten des eigenen Raums; technisch ein
-Alpha-0-Material mit ZWrite vor der Transparent-Queue, das Passthrough-Pendant
-zum „Selective Passthrough“ des Meta-SDK), **dynamische Occlusion an/aus**
-(Echtzeit-Tiefensensor via Depth API / `XR_META_environment_depth`: Punkte und
-Heatmap verschwinden hinter realen Objekten — auch hinter Personen und
-bewegten Möbeln, **kein Raumscan nötig**; implementiert im eigenen Shader
-`WifiScanner/OccludableUnlit`, der das globale `XR_HARD_OCCLUSION`-Keyword von
-AR Foundations `ARShaderOcclusion` auswertet), **„Grid ausrichten“**
-(Wand-Kalibrierung: Button drücken, beide Controller an die Wand halten, beide
-Grip-Tasten halten — eine Linie erscheint zwischen den Controllern —, beim
-Loslassen dreht sich das Heatmap-Raster parallel zur Wand; erneuter
-Button-Druck bricht ab), Deckkraft-Slider, **RSSI-Bereichsfilter**
-(z. B. nur Schwachstellen < −75 dBm zeigen), Farblegende und Live-Statistik
-(Min/Max/Ø-RSSI, Punktzahl, Aufnahmedauer).
+Aktive Werkzeuge blockieren normale A/B-Belegungen dort, wo sonst
+Fehlbedienungen entstehen wuerden.
 
-**Handgelenk-HUD** (linkes Handgelenk): REC-Status, Punkte, RSSI, SSID,
-Ansicht, Deckkraft, Tastenbelegung, Farblegende.
+### Bedienpanel
 
-**Raum zeichnen** (manueller Grundriss, kein Space Setup nötig): Panel-Button
-startet den Modus — ein Punkt schwebt vor dem rechten Controller (Distanz im
-`SceneBootstrap` einstellbar) und klebt auf der bekannten Bodenebene
-(Zeigehöhe wird ignoriert, reine Draufsicht). Trigger setzt reihum die Ecken
-(beliebig viele, im oder gegen den Uhrzeigersinn), ab der zweiten Ecke werden
-Linien gezeichnet. Schließen: B-Taste (letzte→erste Ecke) oder **Einrasten** —
-nahe der ersten Ecke rastet der Cursor ein und wird grün, Trigger schließt.
-A = letzte Ecke zurück. Mehrere Räume nacheinander möglich; die Grundrisse
-bleiben sichtbar. Export bei jedem Daten-Export: `<stem>_rooms.svg` — ein
-**Gesamtgrundriss**: alle Räume in EINER Datei mit gemeinsamem
-Koordinatensystem, also lagerichtig zueinander (**maßstabsgetreu, 1 Unit =
-1 mm**, Wandlängen in Metern beschriftet, nach Grid-Kalibrierung
-achsparallel) + `<stem>_rooms.json` (Roh-Ecken, Basis für einen späteren
-3D-Export). Der Grundriss wird zusätzlich als weißes Linien-Overlay in der
-**Minimap** angezeigt — abschaltbar per Panel-Button „Grundriss (Minimap)“
-oder `SceneBootstrap.minimapShowFloorPlan`.
+Das World-Space-Panel wird mit dem Controller-Strahl bedient.
 
-**Minimap** (rechtes Handgelenk): die komplette Boden-Heatmap als nord-feste,
-maßstabsgetreue Karte (graue Zellen = noch unvermessen) mit einem Pfeilmarker
-für Position und Blickrichtung des Headsets — erleichtert die Orientierung
-beim Ablaufen und zeigt die gesamte Heatmap direkt in der Quest. Aktualisiert
-sich in jedem Ansichtsmodus alle ~2 s; wächst die vermessene Fläche, wächst
-die Karte mit. Umschalten per Y (links) oder Panel-Button.
+**Aufnahme & Export**
 
-### Gebäude + WiFi gemeinsam analysieren
-1. Pro Raum einmal **„Raum scannen“** (Space Setup) ausführen — das Scene Mesh
-   ist der tiefensensor-basierte Raum-Scan des Systems, **kein** Live-SLAM.
-2. Räume ablaufen, bis die Boden-Heatmap keine grauen Lücken mehr zeigt.
-3. **Export**: erzeugt `wifi_<zeitstempel>.csv/.json/.obj` sowie
-   `…_heatmap.png/.json` mit identischem Koordinatensystem
-   (Unity-Tracking-Space, linkshändig — das OBJ ist bewusst NICHT in die
-   OBJ-Konvention gespiegelt, damit es zu posX/Y/Z der CSV passt).
-4. Am PC z. B. in Blender/Python OBJ + CSV zusammen laden.
+- Export-Name
+- PC-IP fuer UDP-Live-Stream
+- Aufnahme / Export
+- Punkte loeschen
+- alle Scan-Dateien vom Geraet loeschen (Zwei-Klick-Bestaetigung)
+- Scan-Auswahl, Scan laden (Zwei-Klick-Bestaetigung)
+- Scan ausrichten
+- Web-Dashboard an/aus plus URL-Anzeige
 
-### Daten vom Gerät holen
-```bash
-adb pull /sdcard/Android/data/<package-name>/files/   ./
+**Raum-Setup**
+
+- Grid ausrichten
+- Raum zeichnen
+- Boden kalibrieren
+- Raeume loeschen
+- Bohrplanung
+- Loeschmodus
+- Tueren/Fenster
+- letzte Oeffnung entfernen
+
+**Etagen**
+
+- aktive Etage wechseln: EG -> OG1 -> ... -> Alle
+- neue Etage anlegen, wenn die Quest deutlich ueber der obersten bekannten
+  Etage liegt
+
+**Visualisierung**
+
+- Ansicht wechseln
+- dynamische Occlusion an/aus
+- Minimap an/aus
+- Grundriss in Minimap an/aus
+- Kartenrotation
+- AP-Standort an/aus
+- Audio an/aus
+- Deckkraft
+
+**Messen & Notizen**
+
+- Distanz messen
+- Notizen setzen
+- Ping-Testpunkte setzen
+- jeweilige Elemente loeschen
+
+**Filter**
+
+- Farblegende
+- RSSI-Min/Max-Filter, z. B. nur Schwachstellen unter -75 dBm anzeigen
+
+---
+
+## Raumzeichnen
+
+Der Grundriss wird manuell in AR gezeichnet, ohne Space Setup:
+
+1. **Raum zeichnen** aktivieren.
+2. Mit dem rechten Controller nacheinander Ecken setzen.
+3. Mit B schliessen oder nahe der ersten Ecke einrasten und per Trigger
+   schliessen.
+4. Fertige Raeume koennen im Zeichenmodus bearbeitet werden:
+   - Ecke anvisieren und ziehen
+   - Bodenflaeche anvisieren, Trigger halten und Raumhoehe ziehen
+
+Raeume mit Hoehe werden als OBJ-Waende exportiert. Boden- und Deckenflaechen
+werden bewusst nicht gekappt, damit auch komplexe/konkave Grundrisse robust
+bleiben.
+
+### Tueren und Fenster
+
+Das Tool **Tueren/Fenster** arbeitet auf vorhandenen Waenden:
+
+- Tuer: erste obere Ecke/Anschlagseite waehlen, zweite Aktion legt Breite fest,
+  Hoehe geht automatisch bis zum Boden.
+- Fenster: zwei gegenueberliegende Ecken des Rechtecks setzen.
+- A wechselt zwischen Tuer/Fenster, B entfernt die letzte Oeffnung.
+
+SVG-Exporte zeichnen Wandluecken mit Symbolen; OBJ-Exporte schneiden reale
+Oeffnungen in die Wandgeometrie.
+
+---
+
+## Sessions Laden Und Ausrichten
+
+Gespeicherte Scans koennen ueber das Panel wieder geladen werden. Geladen
+werden:
+
+- Samples
+- Raeume inklusive Hoehen und Oeffnungen
+- Etagen
+- Grid-Yaw
+
+Da die Quest ihren Tracking-Ursprung bei jedem Start neu setzen kann, liegen
+alte Weltkoordinaten selten exakt auf der realen Umgebung. Dafuer gibt es
+**Scan ausrichten**:
+
+1. Einen geladenen Raum mit Hoehe anvisieren.
+2. Wand aus dem geladenen Grundriss per Trigger waehlen.
+3. Linken Controller an die reale Anker-Ecke halten.
+4. Rechten Controller entlang der realen Wand halten.
+5. Beide Grips halten, Vorschau pruefen, loslassen.
+
+Die App rotiert und verschiebt die komplette Session inklusive Samples,
+Raeumen, Etagen und Grid-Yaw.
+
+---
+
+## Web-Dashboard Und PC-Viewer
+
+### Eingebettetes Web-Dashboard
+
+Wenn aktiviert, serviert die Quest eine lokale Seite:
+
+```text
+http://<quest-ip>:8080
 ```
+
+Das Dashboard zeigt live:
+
+- Messpunkte oder clientseitige 2D-Heatmap
+- Laufpfad und aktuelle Kopfposition
+- Raeume mit Tueren/Fenstern
+- AP-Standort
+- Ping-Knoten
+- Notizen
+- Etagenfilter
+
+Zusaetzlich bietet es:
+
+- Scan-Liste
+- Einzel-Downloads
+- ZIP-Download aller Exporte
+- Export-Trigger vom Browser aus
+
+Hinweis: Das Dashboard ist fuer ein vertrauenswuerdiges lokales Netzwerk
+gedacht. Es hat derzeit keinen PIN/Read-only-Modus.
+
+### Python-Receiver
+
+`tools/receiver.py` empfaengt denselben Live-Stream per UDP und zeigt 2D/3D-
+Ansichten auf dem PC. Es verarbeitet auch Live-Raeume, Bohrlinien, AP-Fix,
+Ping-Knoten, Notizen und Clear-Pakete beim Session-Reload.
+
+---
+
+## Daten Vom Geraet Holen
+
+Per Skript:
+
+```powershell
+.\tools\pull_scans.ps1
+```
+
+Oder direkt per ADB:
+
+```bash
+adb pull /sdcard/Android/data/<package-name>/files/ ./
+```
+
+Das Web-Dashboard kann Exporte ebenfalls einzeln oder als ZIP herunterladen.
 
 ---
 
 ## Bekannte Risiken / Hinweise
-- **WiFi-Permission auf Quest**: `ACCESS_FINE_LOCATION` muss zur Laufzeit
-  gewährt sein, sonst SSID/BSSID redaktiert (`<unknown ssid>` / `rssi -127`).
-  Am 27.06.2026 auf Gerät bestätigt: funktioniert mit gewährter Permission.
-- **`getConnectionInfo()`** ist ab API 31 deprecated, funktioniert aber. Falls
-  ein OS-Update das blockt: in `WifiReader.cs` auf `ConnectivityManager` +
-  `NetworkCallback` + `getTransportInfo()` umstellen.
-- **GameActivity-Einstiegspunkt**: `UnityPlayer.currentActivity` ist `null` —
-  `WifiReader` holt den Context über `ActivityThread.currentApplication()`.
-- **Tracking-Drift** über mehrere Räume möglich → Wolke/Mesh können sich
-  verziehen. Während einer Aufnahme **nicht** recentern.
-- **RSSI rauscht** ±mehrere dB → `smoothingWindow` glättet; pro 0,2-m-Zelle
-  wird zusätzlich der laufende Mittelwert gebildet.
-- **Bodenhöhe der Heatmap**: Auf dem Gerät liefert der Floor-Tracking-Origin
-  der Quest die echte Bodenhöhe (y = 0 des XR Origin, vom System kalibriert);
-  nur im Editor wird aus dem tiefsten Messpunkt − 1,2 m geschätzt. Bei mehreren
-  Etagen bleibt es EINE Fläche auf Höhe des kalibrierten Bodens — obere Etagen
-  bräuchten eine Fläche pro Etage (z. B. via Scene-Mesh-/Plane-Erkennung).
-- **Passthrough/Scene Mesh** funktionieren nur im Android-Build. Im Editor
-  liefert `WifiReader` distanzabhängige Fake-Werte, damit Punktwolke, Heatmap,
-  Modi, Panel und Filter ohne Gerät testbar sind.
+
+- **WiFi-Permission:** `ACCESS_FINE_LOCATION` muss gewaehlt sein, sonst werden
+  SSID/BSSID redaktiert und RSSI kann unbrauchbar sein (`<unknown ssid>`,
+  `-127` dBm).
+- **Android API:** `WifiManager.getConnectionInfo()` ist ab API 31 deprecated,
+  funktioniert aber auf getesteten Quest-Systemen. Falls ein OS-Update das
+  blockt, muss `WifiReader.cs` auf `ConnectivityManager` + `NetworkCallback` +
+  `getTransportInfo()` umgestellt werden.
+- **Tracking-Drift:** Bei langen Scans ueber mehrere Raeume kann Tracking-Drift
+  auftreten. Waehrend einer Aufnahme nicht recentern. Fuer spaeter geladene
+  Scans den Scan-Aligner verwenden.
+- **RSSI-Rauschen:** RSSI schwankt mehrere dB. `smoothingWindow` glaettet, und
+  revisited Punkte werden mit laufendem Mittelwert aktualisiert.
+- **Multi-Etage:** Live-Heatmap und PNG-Export beziehen sich aktuell auf die
+  aktive Etage. Separate Heatmap-PNGs pro Etage sind als Restpunkt offen.
+- **Session-Reload:** Samples, Raeume, Etagen und Grid-Yaw werden geladen.
+  Sidecars fuer Bohrlinien, Ping-Knoten, Notizen und Messungen werden aktuell
+  nur exportiert, noch nicht wiederhergestellt.
+- **Editor:** Passthrough, dynamische Occlusion und echte WiFi-Daten laufen nur
+  im Android-Build. Im Editor liefert `WifiReader` Fake-Werte, damit UI,
+  Punktwolke, Heatmap und Filter testbar bleiben.
+
+---
+
+## Naechste Sinnvolle Schritte
+
+1. Sidecars (`_drill`, `_ping`, `_notes`, `_measure`) laden und beim
+   Scan-Ausrichten mittransformieren.
+2. Separate Heatmap-PNGs pro Etage exportieren.
+3. Das inzwischen lange Bedienpanel in Tabs oder kompakte Werkzeugseiten
+   aufteilen.
+4. Optionaler PIN/Read-only-Modus fuer das Web-Dashboard.

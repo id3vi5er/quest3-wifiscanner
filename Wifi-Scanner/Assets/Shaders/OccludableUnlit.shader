@@ -58,9 +58,22 @@ Shader "WifiScanner/OccludableUnlit"
             #if defined(XR_HARD_OCCLUSION)
             TEXTURE2D_ARRAY(_EnvironmentDepthTexture);
             SAMPLER(sampler_EnvironmentDepthTexture);
+            float4 _EnvironmentDepthTexture_TexelSize;
             float4x4 _EnvironmentDepthProjectionMatrices[2];
             float4 _NdcLinearConversionParameters;
+            // ARShaderOcclusion's matrices expect TRACKING-space positions
+            // (the depth-camera poses are session-relative). Set per frame by
+            // DynamicOcclusionController; identity when the rig sits at origin.
+            float4x4 _WifiWorldToTracking;
             int _IsOcclusionOn;
+
+            float SampleEnvLinearDepth(float2 uv, uint eye)
+            {
+                float ndc = SAMPLE_TEXTURE2D_ARRAY(_EnvironmentDepthTexture,
+                    sampler_EnvironmentDepthTexture, uv, eye).r * 2.0 - 1.0;
+                return _NdcLinearConversionParameters.x
+                    / (ndc + _NdcLinearConversionParameters.y);
+            }
             #endif
 
             struct Attributes
@@ -103,8 +116,10 @@ Shader "WifiScanner/OccludableUnlit"
                 if (_IsOcclusionOn == 1)
                 {
                     uint eye = unity_StereoEyeIndex;
+                    float4 posTS = mul(_WifiWorldToTracking,
+                                       float4(input.positionWS, 1.0));
                     float4 depthClip = mul(_EnvironmentDepthProjectionMatrices[eye],
-                                           float4(input.positionWS, 1.0));
+                                           posTS);
                     // w = linear distance along the depth camera's forward axis
                     // (projection row 3 is (0,0,-1,0)).
                     if (depthClip.w > 0.0)
@@ -114,14 +129,25 @@ Shader "WifiScanner/OccludableUnlit"
                         // Outside the depth camera's view: leave visible.
                         if (all(depthUv >= 0.0) && all(depthUv <= 1.0))
                         {
-                            float envNdc = SAMPLE_TEXTURE2D_ARRAY(
-                                _EnvironmentDepthTexture,
-                                sampler_EnvironmentDepthTexture,
-                                depthUv, eye).r * 2.0 - 1.0;
-                            float envLinear = _NdcLinearConversionParameters.x
-                                / (envNdc + _NdcLinearConversionParameters.y);
-                            // Bias against shimmering at grazing distances.
-                            float bias = max(0.04, envLinear * 0.02);
+                            // Take the FARTHEST depth of a small neighbourhood:
+                            // the sensor is noisy at grazing angles (floor!),
+                            // a single near-biased sample falsely occludes
+                            // surface-hugging content like the floor heatmap.
+                            float2 texel = _EnvironmentDepthTexture_TexelSize.xy;
+                            float envLinear = SampleEnvLinearDepth(depthUv, eye);
+                            envLinear = max(envLinear, SampleEnvLinearDepth(
+                                depthUv + float2(texel.x * 2.0, 0.0), eye));
+                            envLinear = max(envLinear, SampleEnvLinearDepth(
+                                depthUv - float2(texel.x * 2.0, 0.0), eye));
+                            envLinear = max(envLinear, SampleEnvLinearDepth(
+                                depthUv + float2(0.0, texel.y * 2.0), eye));
+                            envLinear = max(envLinear, SampleEnvLinearDepth(
+                                depthUv - float2(0.0, texel.y * 2.0), eye));
+
+                            // Generous distance-proportional bias: real walls
+                            // still occlude rooms behind them, but sensor noise
+                            // on the floor no longer eats the heatmap.
+                            float bias = 0.12 + envLinear * 0.06;
                             if (depthClip.w > envLinear + bias)
                                 discard;
                         }

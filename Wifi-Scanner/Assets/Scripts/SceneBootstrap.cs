@@ -24,16 +24,26 @@ namespace WifiScanner
         public string pcIp = "192.168.1.100";
         public int pcPort = 9999;
 
+        [Header("Web dashboard (browser on the WLAN)")]
+        [Tooltip("Serve a live dashboard + scan downloads at http://<quest-ip>:<port>.")]
+        public bool enableWebDashboard = true;
+        public int webPort = 8080;
+
         [Header("Recording")]
         [Tooltip("Off by default: recording is started deliberately (A button " +
                  "or panel), not by app launch.")]
         public bool autoStartRecording = false;
         [Tooltip("Seconds between autosaves to wifi_autosave (0 = disabled).")]
         public float autosaveInterval = 30f;
+        [Tooltip("Ask at start-up whether to resume the last autosave.")]
+        public bool enableResumePrompt = true;
+        [Tooltip("First-run tutorial card (re-runnable via System tab).")]
+        public bool enableOnboarding = true;
         [Tooltip("A = pause/resume recording, B = export (right controller).")]
         public bool enableControllerControls = true;
-        [Tooltip("Wrist HUD on the left controller: live readings + button bindings.")]
-        public bool enableHud = true;
+        [Tooltip("Clickable tool palette on the left wrist (replaces the old " +
+                 "info HUD): select the exclusive tools with the right ray.")]
+        public bool enableToolPalette = true;
 
         [Header("Sampling density")]
         [Tooltip("Minimum distance between points (m). A new point is only drawn " +
@@ -87,6 +97,12 @@ namespace WifiScanner
         public float roomCursorDistance = 0.3f;
         [Tooltip("Snap distance to the first corner for closing a room (m).")]
         public float roomSnapRadius = 0.3f;
+        [Tooltip("Show the floating tracing cursor dot.")]
+        public bool roomCursorVisible = true;
+        [Tooltip("Diameter of the tracing cursor dot (m).")]
+        public float roomCursorDiameter = 0.05f;
+        [Tooltip("Cut doors/windows into traced walls (panel 'Türen/Fenster').")]
+        public bool enableOpenings = true;
 
         [Header("Minimap")]
         [Tooltip("North-up heatmap minimap on the right wrist with a headset " +
@@ -95,6 +111,35 @@ namespace WifiScanner
         [Tooltip("Draw the traced room outlines (floor plan) over the minimap. " +
                  "Also toggleable at runtime via the panel.")]
         public bool minimapShowFloorPlan = true;
+        [Tooltip("false = north-up (arrow rotates), true = map rotates with " +
+                 "the head, arrow centred. Also toggleable via the panel.")]
+        public bool minimapRotateWithHead = false;
+
+        [Header("Multi-storey")]
+        [Tooltip("Tag points per floor, auto-switch on height change, filter the " +
+                 "heatmap/point cloud per storey (panel 'Etagen').")]
+        public bool enableMultiFloor = true;
+
+        [Header("Analysis tools")]
+        [Tooltip("Access-Point locator: floating router icon at the weighted-" +
+                 "centroid estimate of the connected AP. Toggle via the panel.")]
+        public bool enableApLocator = true;
+        [Tooltip("Minimum samples before the AP estimate is shown.")]
+        public int apLocatorMinSamples = 15;
+        [Tooltip("Latency test: drop nodes and measure round-trip (TCP connect).")]
+        public bool enablePingTester = true;
+        [Tooltip("Host:port used for the latency measurement.")]
+        public string pingHost = "google.com";
+        public int pingPort = 443;
+        [Tooltip("Spatial notes: place typed 3D anchors at the controller.")]
+        public bool enableSpatialNotes = true;
+        [Tooltip("Laser distance measurer between two frozen points.")]
+        public bool enableDistanceMeasurer = true;
+
+        [Header("Audio feedback")]
+        [Tooltip("Geiger-counter ticking: beep rate/pitch follows the live " +
+                 "RSSI. Starts off; toggled via the panel ('Audio').")]
+        public bool enableGeigerAudio = true;
 
         [Header("Controllers")]
         [Tooltip("Hide the rendered controller models; rays, menus and HUD stay.")]
@@ -108,16 +153,10 @@ namespace WifiScanner
         [Tooltip("Start with dynamic occlusion already on.")]
         public bool occlusionOnAtStart = false;
 
-        [Header("Room mesh (3D reconstruction)")]
-        [Tooltip("Scene-mesh room reconstruction: ghost overlay + OBJ export. " +
-                 "Needs the OpenXR feature 'Meta Quest: Meshing' (Android).")]
-        public bool enableRoomMesh = true;
-        [Tooltip("URP/Unlit Material asset, transparent (RoomMeshMat).")]
-        public Material roomMeshMaterialOverride;
-        [Tooltip("URP/Unlit Material asset for occlusion mode: alpha 0 + ZWrite " +
-                 "(RoomMeshOccluderMat). Real walls then hide points/heatmap " +
-                 "behind them.")]
-        public Material roomMeshOccluderMaterialOverride;
+        // NOTE: the OpenXR feature "Meta Quest: Meshing" stays ENABLED in the
+        // project settings even though the scene-mesh room scan was removed —
+        // it is what injects the USE_SCENE permission into the manifest, which
+        // the dynamic occlusion (Depth API) requires.
 
         private SampleCollector _collector;
         private float _autosaveTimer;
@@ -139,10 +178,11 @@ namespace WifiScanner
                           $"'{pointMaterialOverride.name}' (shader " +
                           $"'{pointMaterialOverride.shader.name}').");
 
-            // --- Network streamer ---
+            // --- Network streamer (user-set IP from a previous session wins
+            //     over the value baked into the build) ---
             var streamer = gameObject.AddComponent<NetworkStreamer>();
             streamer.enableStreaming = enableStreaming;
-            streamer.SetTarget(pcIp, pcPort);
+            streamer.SetTarget(PlayerPrefs.GetString("wifi_pc_ip", pcIp), pcPort);
 
             // --- Sample collector ---
             _collector = gameObject.AddComponent<SampleCollector>();
@@ -154,6 +194,24 @@ namespace WifiScanner
             // headAnchor left null -> SampleCollector falls back to Camera.main
             // (the XR Origin head camera).
 
+            // --- Embedded web dashboard (serves the page + live WS + downloads) ---
+            WebDashboardServer webServer = null;
+            if (enableWebDashboard)
+            {
+                webServer = gameObject.AddComponent<WebDashboardServer>();
+                webServer.port = webPort;
+                webServer.collector = _collector;
+                streamer.webServer = webServer; // fan the live stream to browsers
+            }
+
+            // --- Multi-storey manager (tags points per floor) ---
+            FloorManager floorManager = null;
+            if (enableMultiFloor)
+            {
+                floorManager = gameObject.AddComponent<FloorManager>();
+                _collector.floorManager = floorManager;
+            }
+
             // --- Floor heatmap (IDW-interpolated, with gap display) ---
             FloorHeatmapRenderer floor = null;
             if (enableFloorHeatmap)
@@ -162,7 +220,10 @@ namespace WifiScanner
                 floorGo.transform.SetParent(transform, false);
                 floor = floorGo.AddComponent<FloorHeatmapRenderer>();
                 floor.collector = _collector;
+                floor.floorManager = floorManager;
                 floor.floorMaterial = floorMaterialOverride;
+                streamer.floor = floor; // grid yaw for the web dashboard
+
                 floor.cellSize = heatmapCellSize;
                 floor.maxInterpolationDistance = maxInterpolationDistance;
                 floor.opacity = startOpacity;
@@ -179,19 +240,6 @@ namespace WifiScanner
             vizMode.floor = floor;
             vizMode.startMode = enableFloorHeatmap ? startViewMode : VizMode.PointCloud;
 
-            // --- Room mesh: scene-mesh 3D reconstruction + OBJ export ---
-            RoomMeshController roomMesh = null;
-            if (enableRoomMesh)
-            {
-                roomMesh = gameObject.AddComponent<RoomMeshController>();
-                roomMesh.meshMaterial = roomMeshMaterialOverride;
-                roomMesh.occluderMaterial = roomMeshOccluderMaterialOverride;
-                _collector.roomMesh = roomMesh; // OBJ rides along with each export
-                if (roomMeshMaterialOverride == null)
-                    Debug.LogWarning("[SceneBootstrap] roomMeshMaterialOverride not set — " +
-                                     "assign Assets/RoomMeshMat.mat or the room mesh " +
-                                     "stays invisible.");
-            }
 
             // --- Grid calibration (two controllers against a wall) ---
             GridCalibrator gridCal = null;
@@ -211,7 +259,34 @@ namespace WifiScanner
                 roomTracer.visualMaterial = pointMaterialOverride;
                 roomTracer.cursorDistance = roomCursorDistance;
                 roomTracer.snapRadius = roomSnapRadius;
+                roomTracer.cursorVisible = roomCursorVisible;
+                roomTracer.cursorDiameter = roomCursorDiameter;
+                roomTracer.streamer = streamer; // live floor plan on the PC
                 _collector.roomTracer = roomTracer;
+            }
+
+            // --- Drill planning + delete mode (need traced rooms) ---
+            DrillPlanner drill = null;
+            DeleteController deleter = null;
+            if (roomTracer != null)
+            {
+                drill = gameObject.AddComponent<DrillPlanner>();
+                drill.roomTracer = roomTracer;
+                drill.visualMaterial = pointMaterialOverride;
+                drill.streamer = streamer; // live drill lines on the PC
+                deleter = gameObject.AddComponent<DeleteController>();
+                deleter.roomTracer = roomTracer;
+                deleter.drill = drill;
+                _collector.drillPlanner = drill;
+            }
+
+            // --- Doors & windows cut into traced walls ---
+            OpeningTool openingTool = null;
+            if (roomTracer != null && enableOpenings)
+            {
+                openingTool = gameObject.AddComponent<OpeningTool>();
+                openingTool.roomTracer = roomTracer;
+                openingTool.visualMaterial = pointMaterialOverride;
             }
 
             // --- Minimap on the right wrist (needs the floor heatmap as source) ---
@@ -222,6 +297,132 @@ namespace WifiScanner
                 minimap.floor = floor;
                 minimap.roomTracer = roomTracer;
                 minimap.showFloorPlan = minimapShowFloorPlan;
+                minimap.rotateWithHead = minimapRotateWithHead;
+                minimap.drillPlanner = drill; // right stick belongs to drilling
+                minimap.collector = _collector; // status line under the map
+                minimap.floorManager = floorManager;
+            }
+
+            // --- AP locator (passive: floating router icon at the estimate) ---
+            ApLocator apLocator = null;
+            if (enableApLocator)
+            {
+                apLocator = gameObject.AddComponent<ApLocator>();
+                apLocator.collector = _collector;
+                apLocator.visualMaterial = pointMaterialOverride;
+                apLocator.streamer = streamer;
+                apLocator.minSamples = apLocatorMinSamples;
+                _collector.apLocator = apLocator;
+            }
+
+            // --- Wall attenuation estimate (needs rooms + AP fit) ---
+            WallLossEstimator wallLoss = null;
+            if (apLocator != null && roomTracer != null)
+            {
+                wallLoss = gameObject.AddComponent<WallLossEstimator>();
+                wallLoss.collector = _collector;
+                wallLoss.roomTracer = roomTracer;
+                wallLoss.apLocator = apLocator;
+                _collector.wallLoss = wallLoss;
+            }
+
+            // --- Coverage prediction (virtual APs / real fix over the rooms) ---
+            CoverageSimulator coverage = null;
+            if (roomTracer != null && floorMaterialOverride != null)
+            {
+                coverage = gameObject.AddComponent<CoverageSimulator>();
+                coverage.roomTracer = roomTracer;
+                coverage.apLocator = apLocator;
+                coverage.floorManager = floorManager;
+                coverage.floorMaterial = floorMaterialOverride;
+                coverage.wallLoss = wallLoss;
+            }
+
+            // --- Ping tester (latency nodes) ---
+            PingTester pingTester = null;
+            if (enablePingTester)
+            {
+                pingTester = gameObject.AddComponent<PingTester>();
+                pingTester.visualMaterial = pointMaterialOverride;
+                pingTester.streamer = streamer;
+                pingTester.host = pingHost;
+                pingTester.port = pingPort;
+                _collector.pingTester = pingTester;
+            }
+
+            // --- Spatial notes (controller-anchored) ---
+            SpatialNoteManager spatialNotes = null;
+            if (enableSpatialNotes)
+            {
+                spatialNotes = gameObject.AddComponent<SpatialNoteManager>();
+                spatialNotes.visualMaterial = pointMaterialOverride;
+                spatialNotes.streamer = streamer;
+                _collector.spatialNotes = spatialNotes;
+                if (coverage != null)
+                    coverage.spatialNotes = spatialNotes; // virtual APs
+            }
+
+            // --- Distance measurer (laser between two frozen points) ---
+            DistanceMeasurer distanceMeasurer = null;
+            if (enableDistanceMeasurer)
+            {
+                distanceMeasurer = gameObject.AddComponent<DistanceMeasurer>();
+                distanceMeasurer.visualMaterial = pointMaterialOverride;
+                _collector.distanceMeasurer = distanceMeasurer;
+            }
+
+            // --- Session loader + scan aligner (load saved scans, re-anchor
+            //     them onto the current tracking origin) ---
+            var sessionLoader = gameObject.AddComponent<SessionLoader>();
+            sessionLoader.collector = _collector;
+            sessionLoader.roomTracer = roomTracer;
+            sessionLoader.floorManager = floorManager;
+            sessionLoader.floor = floor;
+            sessionLoader.streamer = streamer;
+            sessionLoader.drillPlanner = drill;
+            sessionLoader.pingTester = pingTester;
+            sessionLoader.spatialNotes = spatialNotes;
+            sessionLoader.distanceMeasurer = distanceMeasurer;
+
+            ScanAligner scanAligner = null;
+            if (roomTracer != null)
+            {
+                scanAligner = gameObject.AddComponent<ScanAligner>();
+                scanAligner.roomTracer = roomTracer;
+                scanAligner.sessionLoader = sessionLoader;
+                scanAligner.lineMaterial = pointMaterialOverride;
+            }
+
+            // --- "Letzte Session fortsetzen?" card when an autosave exists ---
+            if (enableResumePrompt && autosaveInterval > 0f)
+            {
+                var resume = gameObject.AddComponent<ResumePrompt>();
+                resume.sessionLoader = sessionLoader;
+            }
+
+            // --- First-run tutorial ---
+            OnboardingGuide onboarding = null;
+            if (enableOnboarding)
+            {
+                onboarding = gameObject.AddComponent<OnboardingGuide>();
+                onboarding.collector = _collector;
+                onboarding.roomTracer = roomTracer;
+            }
+
+            // The universal delete mode can now target every element type.
+            if (deleter != null)
+            {
+                deleter.distanceMeasurer = distanceMeasurer;
+                deleter.pingTester = pingTester;
+                deleter.spatialNotes = spatialNotes;
+            }
+
+            // --- Geiger-counter audio feedback (RSSI -> tick rate) ---
+            GeigerCounter geiger = null;
+            if (enableGeigerAudio)
+            {
+                geiger = gameObject.AddComponent<GeigerCounter>();
+                geiger.collector = _collector;
             }
 
             // --- Dynamic occlusion via real-time environment depth ---
@@ -241,7 +442,6 @@ namespace WifiScanner
             {
                 var controls = gameObject.AddComponent<RecordingControls>();
                 controls.collector = _collector;
-                controls.tracer = roomTracer;
             }
 
             // --- Left thumbstick controls opacity (points + floor heatmap) ---
@@ -249,13 +449,18 @@ namespace WifiScanner
             opacityControls.cloud = cloud;
             opacityControls.floor = floor;
 
-            // --- Wrist HUD (left controller): live readings + bindings ---
-            if (enableHud)
+            // --- Tool palette (left wrist): tap a tool with the right ray ---
+            if (enableToolPalette)
             {
-                var hud = gameObject.AddComponent<HudController>();
-                hud.collector = _collector;
-                hud.cloud = cloud;
-                hud.modeController = vizMode;
+                var palette = gameObject.AddComponent<ToolPalette>();
+                palette.roomTracer = roomTracer;
+                palette.openingTool = openingTool;
+                palette.drillPlanner = drill;
+                palette.distanceMeasurer = distanceMeasurer;
+                palette.spatialNotes = spatialNotes;
+                palette.pingTester = pingTester;
+                palette.deleteController = deleter;
+                palette.scanAligner = scanAligner;
             }
 
             // --- Interactive world-space control panel (menu button toggles) ---
@@ -266,11 +471,23 @@ namespace WifiScanner
                 panel.cloud = cloud;
                 panel.floor = floor;
                 panel.modeController = vizMode;
-                panel.roomMesh = roomMesh;
                 panel.occlusion = occlusion;
+                panel.streamer = streamer;
+                panel.streamPort = pcPort;
                 panel.minimap = minimap;
                 panel.gridCalibrator = gridCal;
+                panel.floorManager = floorManager;
+                panel.webServer = webServer;
                 panel.roomTracer = roomTracer;
+                panel.apLocator = apLocator;
+                panel.pingTester = pingTester;
+                panel.spatialNotes = spatialNotes;
+                panel.distanceMeasurer = distanceMeasurer;
+                panel.geiger = geiger;
+                panel.sessionLoader = sessionLoader;
+                panel.wallLoss = wallLoss;
+                panel.coverage = coverage;
+                panel.onboarding = onboarding;
             }
 
             Debug.Log("[SceneBootstrap] WiFi scanner initialised " +

@@ -36,6 +36,14 @@ namespace WifiScanner
 
         private AROcclusionManager _manager;
         private ARShaderOcclusion _shaderOcclusion;
+        private Transform _trackingSpace;
+
+        private static readonly int WorldToTrackingId =
+            Shader.PropertyToID("_WifiWorldToTracking");
+        private static readonly int DepthTexId =
+            Shader.PropertyToID("_EnvironmentDepthTexture");
+        private static readonly int DepthTexelSizeId =
+            Shader.PropertyToID("_EnvironmentDepthTexture_TexelSize");
 
         private void Start()
         {
@@ -60,9 +68,32 @@ namespace WifiScanner
             _shaderOcclusion.occlusionShaderMode = AROcclusionShaderMode.HardOcclusion;
             _shaderOcclusion.enabled = false; // sets _IsOcclusionOn = 0
 
+            _trackingSpace = cam.transform.parent; // Camera Offset
+            Shader.SetGlobalMatrix(WorldToTrackingId, Matrix4x4.identity);
+
             SetOcclusionEnabled(occlusionOnAtStart);
             Debug.Log("[DynOcclusion] Ready (needs the OpenXR 'Meta Quest: " +
                       "Occlusion' feature; device build only).");
+        }
+
+        private void Update()
+        {
+            if (!OcclusionEnabled) return;
+
+            // The depth reprojection matrices from ARShaderOcclusion expect
+            // TRACKING-space positions; our shader works in world space, so
+            // publish the world->tracking transform (identity if the rig
+            // never moves).
+            if (_trackingSpace != null)
+                Shader.SetGlobalMatrix(WorldToTrackingId,
+                    _trackingSpace.worldToLocalMatrix);
+
+            // TexelSize is only set automatically for material textures, not
+            // for globals — the shader needs it for neighbourhood sampling.
+            var tex = Shader.GetGlobalTexture(DepthTexId);
+            if (tex != null)
+                Shader.SetGlobalVector(DepthTexelSizeId, new Vector4(
+                    1f / tex.width, 1f / tex.height, tex.width, tex.height));
         }
 
         public void ToggleOcclusion() => SetOcclusionEnabled(!OcclusionEnabled);

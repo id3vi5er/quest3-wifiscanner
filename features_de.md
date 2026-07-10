@@ -26,8 +26,8 @@ Dank der revolutionären Depth API der Quest 3 verschmelzen die virtuellen Daten
 
 ### Orientierung & Navigation
 Behalte auch in großen Gebäuden immer den Überblick:
-* **Interaktive Handgelenk-Minimap:** Auf deinem rechten Handgelenk befindet sich eine Live-Karte. Sie zeigt den komplett vermessenen Bereich (Boden-Heatmap), deine aktuelle Position als Pfeil und deine Blickrichtung. Die Karte wächst automatisch mit, je mehr Fläche du erkundest.
-* **Live-HUD (Heads-Up Display):** Auf dem linken Handgelenk hast du alle wichtigen Echtzeit-Parameter im Blick: Aktuelles Netzwerk (SSID), Signalstärke (RSSI in dBm), Anzahl der Messpunkte und Aufnahme-Status.
+* **Interaktive Handgelenk-Minimap:** Auf deinem rechten Handgelenk befindet sich eine Live-Karte. Sie zeigt den komplett vermessenen Bereich (Boden-Heatmap), deine aktuelle Position als Pfeil und deine Blickrichtung. Die Karte wächst automatisch mit, je mehr Fläche du erkundest. Direkt darunter: die wichtigsten Echtzeit-Werte (Netzwerk/SSID, RSSI in dBm, Messpunkte, Aufnahme-Status) auf einen Blick.
+* **Werkzeug-Palette am linken Handgelenk:** Ein kurzer Blick zur linken Hand genügt — dort sitzt eine antippbare Palette mit allen Werkzeugen (Raum zeichnen, Türen/Fenster, Bohrplanung, Distanzmessung, Notizen, Ping-Test, Löschen, Scan-Ausrichtung). Das aktive Werkzeug leuchtet auf, und eine Kurzanleitung dazu wird direkt an der Hand eingeblendet — ganz ohne das Hauptmenü zu öffnen.
 
 ### Architektur-Tools: Raum-Zeichner (Room Tracer)
 Erstelle maßstabsgetreue Grundrisse direkt in AR:
@@ -38,7 +38,7 @@ Erstelle maßstabsgetreue Grundrisse direkt in AR:
 ### Präzisions-Werkzeuge & Bedienung
 * **Wand-Kalibrierung (Grid Align):** Richte das Raster der Heatmap mit wenigen Klicks parallel zu deinen echten Wänden aus, damit die exportierten Karten perfekt gerade sind.
 * **RSSI-Filter:** Du suchst nur nach Funklöchern? Blende starke Signale per Schieberegler einfach aus und zeige nur Werte unter z. B. -75 dBm an.
-* **Floating Control Panel:** Ein virtuelles Tablet, das vor dir schwebt. Hier steuerst du Deckkraft, Ansichtsmodi, Export-Namen (via Systemtastatur) und startest/stoppst die Aufnahme.
+* **Floating Control Panel:** Ein kompaktes virtuelles Tablet, das vor dir schwebt — übersichtlich in vier Tabs sortiert (Aufnahme / Ansicht / Räume / System). Hier steuerst du Deckkraft, Ansichtsmodi, Filter, Etagen, Export-Namen (via Systemtastatur) und startest/stoppst die Aufnahme.
 
 ### Umfassender Daten-Export
 Wenn der Scan abgeschlossen ist, bleiben die Daten nicht in der Brille. Speichere deine Messergebnisse lokal auf der Quest und ziehe sie per PC-Skript (`pull_scans.ps1`) bequem auf deinen Rechner:
