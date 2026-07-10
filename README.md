@@ -49,6 +49,9 @@ Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
 - **Analysewerkzeuge**: AP-Standort-Schaetzung, TCP-Latenz-Punkte,
   raeumliche Notizen, Distanzmessung, Bohrplanung und universeller
   Loeschmodus.
+- **Coverage-Simulation (Prognose)**: Echtzeit-Pfadverlust-Vorhersage basierend
+  auf dem Grundriss (Raumwaende, Tueren/Fenster) und einem realen (fixierten)
+  oder virtuell gesetzten AP.
 - **Geiger-Audio**: optionales RSSI-Audiofeedback; staerkeres Signal erzeugt
   schnellere/hoehere Blips.
 - **Session laden und ausrichten**: gespeicherte Scans koennen in der Quest
@@ -66,6 +69,8 @@ Beim Export schreibt die App nach `Application.persistentDataPath`:
 - `<stem>.csv` und `<stem>.json` mit allen Messpunkten
 - `<stem>_heatmap.png` plus `<stem>_heatmap.json` mit Georeferenz
 - `<stem>_rooms.svg` und `<stem>_rooms.json` fuer den Grundriss
+- `<stem>_walls.svg` als Grundriss mit beschrifteten Wand-Daempfungen (in dB)
+- `<stem>_coverage.png` plus `<stem>_coverage.json` mit der simulierten Coverage-Prognose
 - `<stem>_rooms.obj` fuer extrudierte Raumwaende mit Tuer-/Fensterloechen
 - `<stem>_combined.svg` als kombinierte Heatmap+Grundriss-Ansicht
 - optional `<stem>_drill.json`, `<stem>_apfix.json`, `<stem>_ping.json`,
@@ -320,6 +325,7 @@ http://<quest-ip>:8080
 Das Dashboard zeigt live:
 
 - Messpunkte oder clientseitige 2D-Heatmap
+- Simulierte Coverage-Prognose (inkl. Waende und virtuellen/realen APs)
 - Laufpfad und aktuelle Kopfposition
 - Raeume mit Tueren/Fenstern
 - AP-Standort
