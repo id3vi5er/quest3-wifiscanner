@@ -32,6 +32,7 @@ namespace WifiScanner
         public float floorY;
         public float height; // 0 = flat outline, >0 = extruded (OBJ export)
         public List<WallOpening> openings = new List<WallOpening>();
+        public string name = ""; // user label ("Wohnzimmer"), shown + exported
     }
 
     /// <summary>
@@ -95,6 +96,7 @@ namespace WifiScanner
         public bool IsActive { get; private set; }
         /// <summary>Floor calibration armed: next trigger sets the floor height.</summary>
         public bool IsCalibratingFloor { get; private set; }
+        public bool IsNamingRoom { get; private set; }
         public IReadOnlyList<RoomOutline> Rooms => _rooms;
         public int ActiveCornerCount => _activeCorners.Count;
 
@@ -108,6 +110,7 @@ namespace WifiScanner
             public readonly List<LineRenderer> verticalLines = new List<LineRenderer>();
             public readonly List<LineRenderer> openingLines = new List<LineRenderer>();
             public readonly List<Transform> markers = new List<Transform>();
+            public WorldLabel nameLabel; // floating room name at the centroid
         }
 
         private readonly List<RoomOutline> _rooms = new List<RoomOutline>();
@@ -137,6 +140,8 @@ namespace WifiScanner
         private DragMode _drag = DragMode.None;
         private int _dragRoom = -1;
         private int _dragCorner = -1;
+        private TouchScreenKeyboard _nameKeyboard;
+        private RoomVisual _namingVisual;
         private Vector3 _heightAnchor;
         private float _roomsResendTimer;
 
@@ -146,6 +151,10 @@ namespace WifiScanner
             public string type = "rooms";
             public float gridYawDegrees;
             public List<RoomOutline> rooms;
+            // Storey base heights + labels so viewers can map each room
+            // (via its floorY) to a storey and filter per floor.
+            public List<float> floorBases;
+            public List<string> floorLabels;
         }
 
         private void Start()
@@ -251,14 +260,30 @@ namespace WifiScanner
         public void ToggleFloorCalibration()
         {
             IsCalibratingFloor = !IsCalibratingFloor;
+            IsNamingRoom = false;
+            RefreshCursorVisible();
+        }
+
+        /// <summary>Arms room naming (panel button "Raum benennen"): aim the
+        /// cursor into a finished room on the work plane, trigger opens the
+        /// Quest keyboard for its name.</summary>
+        public void ToggleRoomNaming()
+        {
+            IsNamingRoom = !IsNamingRoom;
+            IsCalibratingFloor = false;
+            if (!IsNamingRoom)
+            {
+                _nameKeyboard = null;
+                _namingVisual = null;
+            }
             RefreshCursorVisible();
         }
 
         private void RefreshCursorVisible()
         {
             if (_cursor != null)
-                _cursor.gameObject.SetActive(
-                    cursorVisible && (IsActive || IsCalibratingFloor));
+                _cursor.gameObject.SetActive(cursorVisible &&
+                    (IsActive || IsCalibratingFloor || IsNamingRoom));
         }
 
         private void ResolveFloor()
@@ -302,7 +327,9 @@ namespace WifiScanner
                     SendRoomsUpdate();
             }
 
-            if (!IsActive && !IsCalibratingFloor) return;
+            PollNameKeyboard();
+
+            if (!IsActive && !IsCalibratingFloor && !IsNamingRoom) return;
 
             SyncWorkPlane();
 
@@ -328,6 +355,28 @@ namespace WifiScanner
 
             Vector3 cursor = rawCursor;
             if (_hasFloor) cursor.y = _floorY + lineFloorOffset;
+
+            // -- Room naming: aim into a room on the work plane, trigger opens
+            //    the keyboard for its name --
+            if (IsNamingRoom)
+            {
+                bool overRoom = FindRoomContaining(cursor, out int nameRoom);
+                if (_cursor != null)
+                {
+                    _cursor.position = cursor;
+                    SetCursorMat(overRoom ? _matGreen : _matYellow);
+                }
+                if (!ui && overRoom && _nameKeyboard == null &&
+                    _placeAction.WasPressedThisFrame())
+                {
+                    _namingVisual = _visuals[nameRoom];
+                    _nameKeyboard = TouchScreenKeyboard.Open(
+                        _namingVisual.outline.name ?? "",
+                        TouchScreenKeyboardType.Default);
+                    Haptics.TickRight();
+                }
+                return;
+            }
 
             // -- Ongoing drags --
             if (_drag == DragMode.Height) { UpdateHeightDrag(handPos, handFwd); return; }
@@ -394,6 +443,33 @@ namespace WifiScanner
                 UndoCorner();
             if (!ui && _finishAction.WasPressedThisFrame())
                 CloseRoom();
+        }
+
+        // ---- Room naming ----
+
+        // Applies the Quest keyboard's text live to the room being named.
+        private void PollNameKeyboard()
+        {
+            if (_nameKeyboard == null || _namingVisual == null) return;
+            if (_nameKeyboard.status == TouchScreenKeyboard.Status.Visible)
+            {
+                _namingVisual.outline.name = _nameKeyboard.text ?? "";
+                RefreshNameLabel(_namingVisual);
+                return;
+            }
+            // Done / Canceled / LostFocus — finalise and leave the mode.
+            if (_nameKeyboard.status == TouchScreenKeyboard.Status.Done)
+            {
+                _namingVisual.outline.name = _nameKeyboard.text ?? "";
+                Haptics.PlaceRight();
+            }
+            RefreshNameLabel(_namingVisual);
+            SendRoomsUpdate();
+            _nameKeyboard = null;
+            _namingVisual = null;
+            IsNamingRoom = false;
+            RefreshCursorVisible();
+            Debug.Log("[RoomTracer] Raumname gesetzt.");
         }
 
         // ---- Floor calibration ----
@@ -868,7 +944,15 @@ namespace WifiScanner
             {
                 gridYawDegrees = floor != null ? floor.gridYawDegrees : 0f,
                 rooms = _rooms,
+                floorBases = new List<float>(),
+                floorLabels = new List<string>(),
             };
+            if (floorManager != null)
+                foreach (var f in floorManager.Floors)
+                {
+                    packet.floorBases.Add(f.baseY);
+                    packet.floorLabels.Add(f.label);
+                }
             streamer.SendRaw(JsonUtility.ToJson(packet));
         }
 
@@ -880,8 +964,41 @@ namespace WifiScanner
         {
             if (_rooms.Count == 0) return;
             float gridYaw = floor != null ? floor.gridYawDegrees : 0f;
-            DataExporter.ExportRoomsSvg(_rooms, gridYaw, stem, drills);
-            DataExporter.ExportRoomsObj(_rooms, stem);
+
+            // One floor plan PER STOREY — mixing storeys in one 2D plan is
+            // unreadable. Single storey keeps the plain _rooms.svg name.
+            if (floorManager != null && floorManager.Floors.Count > 1)
+            {
+                DataExporter.ExportRoomsJson(_rooms, gridYaw, stem); // all rooms once
+                foreach (var level in floorManager.Floors)
+                {
+                    var floorRooms = new List<RoomOutline>();
+                    foreach (var room in _rooms)
+                        if (Mathf.Abs(room.floorY - level.baseY) <= 1f)
+                            floorRooms.Add(room);
+                    if (floorRooms.Count == 0) continue;
+                    var floorDrills = FilterDrills(drills, level.baseY);
+                    DataExporter.ExportRoomsSvg(floorRooms, gridYaw, stem,
+                        floorDrills, "_" + level.label, writeJson: false);
+                }
+            }
+            else
+            {
+                DataExporter.ExportRoomsSvg(_rooms, gridYaw, stem, drills);
+            }
+            DataExporter.ExportRoomsObj(_rooms, stem); // 3D: all storeys stacked
+        }
+
+        // Drill lines whose entry sits on the given storey (base .. base+3.2 m).
+        private static List<DrillLine> FilterDrills(
+            IReadOnlyList<DrillLine> drills, float baseY)
+        {
+            if (drills == null) return null;
+            var result = new List<DrillLine>();
+            foreach (var d in drills)
+                if (d.entry.y >= baseY - 0.3f && d.entry.y <= baseY + 3.2f)
+                    result.Add(d);
+            return result.Count > 0 ? result : null;
         }
 
         // ---- Visuals ----
@@ -903,6 +1020,27 @@ namespace WifiScanner
 
             UpdateHeightVisual(v);
             UpdateOpeningVisual(v);
+            RefreshNameLabel(v);
+        }
+
+        // Floating room name above the floor centroid (hidden while unnamed).
+        private void RefreshNameLabel(RoomVisual v)
+        {
+            bool hasName = !string.IsNullOrEmpty(v.outline.name);
+            if (v.nameLabel == null)
+            {
+                if (!hasName) return;
+                v.nameLabel = WorldLabel.Create(v.root.transform, 0.0022f, 30f);
+                v.nameLabel.SetColor(new Color(0.55f, 0.9f, 1f));
+            }
+            var corners = v.outline.cornersXZ;
+            Vector2 centroid = Vector2.zero;
+            foreach (var c in corners) centroid += c;
+            if (corners.Count > 0) centroid /= corners.Count;
+            v.nameLabel.SetWorldPosition(new Vector3(
+                centroid.x, v.outline.floorY + 1.3f, centroid.y));
+            v.nameLabel.SetText(v.outline.name);
+            v.nameLabel.SetVisible(hasName);
         }
 
         // Draws each door/window as a rectangle loop on its wall (doors orange,

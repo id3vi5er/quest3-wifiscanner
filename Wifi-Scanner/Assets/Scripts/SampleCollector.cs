@@ -419,25 +419,55 @@ namespace WifiScanner
                     DataExporter.ExportWallsJson(wallLoss.Losses,
                         apLocator.PathLossExponent, apLocator.PowerAt1mDbm, stem);
                     // Floor plan with the dB values written on the walls —
-                    // the table alone is hard to map to real walls.
+                    // one per storey (mixed storeys are unreadable in 2D).
                     if (roomTracer != null && roomTracer.Rooms.Count > 0)
-                        DataExporter.ExportWallsSvg(roomTracer.Rooms,
-                            floorHeatmap != null ? floorHeatmap.gridYawDegrees : 0f,
-                            wallLoss.Losses, stem);
+                    {
+                        float yaw = floorHeatmap != null
+                            ? floorHeatmap.gridYawDegrees : 0f;
+                        if (floorManager != null && floorManager.Floors.Count > 1)
+                            foreach (var level in floorManager.Floors)
+                                DataExporter.ExportWallsSvg(roomTracer.Rooms,
+                                    yaw, wallLoss.Losses, stem,
+                                    level.baseY, "_" + level.label);
+                        else
+                            DataExporter.ExportWallsSvg(roomTracer.Rooms,
+                                yaw, wallLoss.Losses, stem);
+                    }
                 }
             }
             coverage?.ExportPng(stem); // null-op without rooms or AP source
 
-            // Combined view: heatmap as background, floor plan on top —
-            // both layers share the grid-space georeference.
+            // Combined view: heatmap as background, floor plan on top — both
+            // layers share the grid-space georeference. The heatmap PNG is the
+            // ACTIVE storey's, so only that storey's rooms/drills go on top.
             if (heatmapPng != null && roomTracer != null &&
                 roomTracer.Rooms.Count > 0 &&
                 floorHeatmap.TryGetMapInfo(out Vector2 gridMin, out float cell,
                     out int texW, out int texH))
             {
-                DataExporter.ExportCombinedSvg(heatmapPng, gridMin, cell,
-                    texW, texH, floorHeatmap.gridYawDegrees,
-                    roomTracer.Rooms, stem, drills);
+                IReadOnlyList<RoomOutline> combinedRooms = roomTracer.Rooms;
+                IReadOnlyList<DrillLine> combinedDrills = drills;
+                if (floorManager != null && floorManager.Floors.Count > 1)
+                {
+                    float baseY = floorManager.ActiveBaseY;
+                    var roomList = new List<RoomOutline>();
+                    foreach (var room in roomTracer.Rooms)
+                        if (Mathf.Abs(room.floorY - baseY) <= 1f)
+                            roomList.Add(room);
+                    combinedRooms = roomList;
+                    if (drills != null)
+                    {
+                        var drillList = new List<DrillLine>();
+                        foreach (var d in drills)
+                            if (d.entry.y >= baseY - 0.3f && d.entry.y <= baseY + 3.2f)
+                                drillList.Add(d);
+                        combinedDrills = drillList.Count > 0 ? drillList : null;
+                    }
+                }
+                if (combinedRooms.Count > 0)
+                    DataExporter.ExportCombinedSvg(heatmapPng, gridMin, cell,
+                        texW, texH, floorHeatmap.gridYawDegrees,
+                        combinedRooms, stem, combinedDrills);
             }
 
             // Survey report LAST — it embeds the files written above.

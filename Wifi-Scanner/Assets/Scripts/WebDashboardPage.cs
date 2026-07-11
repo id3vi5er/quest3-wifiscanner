@@ -2,13 +2,19 @@ namespace WifiScanner
 {
     /// <summary>
     /// The self-contained HTML/JS page served by <see cref="WebDashboardServer"/>.
-    /// No external resources (works offline on the Quest's WLAN). A live canvas-2D
-    /// dashboard mirroring the PC viewer: RSSI heatmap, head marker, rooms with
-    /// door/window openings, AP fix, ping nodes and spatial notes, a storey filter,
-    /// layer toggles and a scan-download panel.
+    /// No external resources (works offline on the Quest's WLAN).
     ///
-    /// Written with single quotes throughout so it needs no escaping inside the
-    /// C# verbatim string.
+    /// Layout: a top toolbar (view / storey / AP selects + an EDITABLE colour
+    /// legend), the full-size map canvas, a collapsible layer inspector, a
+    /// download drawer (files expand on demand), a bottom timeline (RSSI
+    /// history, roaming ticks, connection outages) and a click-to-inspect
+    /// tool (point / AP / note / ping / roaming details). A saved scan can be
+    /// loaded as a BEFORE dataset for a split comparison view with a draggable
+    /// divider and a shared transform. On phones the map goes fullscreen and
+    /// the panels become bottom sheets.
+    ///
+    /// Written with single quotes throughout so it needs no escaping inside
+    /// the C# verbatim string.
     /// </summary>
     public static class WebDashboardPage
     {
@@ -23,79 +29,148 @@ namespace WifiScanner
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, sans-serif; background:#0d0f13; color:#e6e6e6;
-         display:flex; height:100vh; overflow:hidden; }
-  #side { width:260px; flex:0 0 260px; padding:12px; overflow-y:auto;
-          background:#15181f; border-right:1px solid #262b34; }
-  #main { flex:1; position:relative; }
-  canvas { width:100%; height:100%; display:block; background:#0d0f13; }
-  h1 { font-size:15px; margin:0 0 10px; }
-  h2 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#8a93a6;
-       margin:16px 0 6px; }
-  label { display:block; font-size:13px; margin:3px 0; cursor:pointer; }
-  select, button { width:100%; padding:6px; margin:3px 0; background:#232833; color:#e6e6e6;
-          border:1px solid #333b48; border-radius:6px; font-size:13px; cursor:pointer; }
-  button:hover { background:#2c3340; }
-  #status { font-size:12px; margin-bottom:8px; }
+         display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+  #toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+             padding:8px 10px; background:#15181f; border-bottom:1px solid #262b34; }
+  #toolbar h1 { font-size:14px; margin:0 6px 0 0; white-space:nowrap; }
+  #toolbar select, #toolbar button, #toolbar input {
+      padding:5px 8px; background:#232833; color:#e6e6e6; border:1px solid #333b48;
+      border-radius:6px; font-size:13px; cursor:pointer; }
+  #toolbar input[type=number] { width:58px; cursor:text; }
+  #toolbar button.active { background:#2b5b80; border-color:#4a90c8; }
+  #legendbox { display:flex; align-items:center; gap:4px; font-size:11px; color:#9aa; }
+  #legendbar { width:110px; height:12px; border-radius:3px; }
+  #status { font-size:12px; margin-left:auto; white-space:nowrap; }
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; }
-  #stats { font-size:12px; color:#aeb6c4; white-space:pre-line; }
+
+  #stage { flex:1; position:relative; overflow:hidden; }
+  canvas#c { width:100%; height:100%; display:block; background:#0d0f13; }
+
+  .panel { position:absolute; top:10px; right:10px; width:230px; max-height:75%;
+           overflow-y:auto; background:#15181fee; border:1px solid #333b48;
+           border-radius:10px; padding:12px; display:none; z-index:5; }
+  .panel h2 { font-size:11px; text-transform:uppercase; letter-spacing:1px;
+              color:#8a93a6; margin:10px 0 6px; }
+  .panel h2:first-child { margin-top:0; }
+  .panel label { display:block; font-size:13px; margin:3px 0; cursor:pointer; }
+  .panel select, .panel button { width:100%; padding:6px; margin:3px 0; background:#232833;
+      color:#e6e6e6; border:1px solid #333b48; border-radius:6px; font-size:13px; cursor:pointer; }
   #files a { display:block; font-size:12px; color:#6cc0ff; text-decoration:none;
              padding:2px 0; word-break:break-all; }
-  #files a:hover { text-decoration:underline; }
   .sz { color:#6b7280; }
+
+  #popup { position:absolute; display:none; background:#1a2029f2; border:1px solid #4a90c8;
+           border-radius:8px; padding:8px 10px; font-size:12px; line-height:1.5;
+           max-width:240px; z-index:8; pointer-events:none; white-space:pre-line; }
+
+  #divider { position:absolute; top:0; bottom:0; width:14px; margin-left:-7px;
+             cursor:col-resize; display:none; z-index:6; }
+  #divider::after { content:''; position:absolute; left:6px; top:0; bottom:0;
+             width:2px; background:#4a90c8; }
+  .divlabel { position:absolute; top:6px; font-size:11px; color:#9fceff;
+              background:#15181fcc; padding:2px 6px; border-radius:4px; z-index:4; display:none; }
+
+  #timeline { height:110px; background:#12151b; border-top:1px solid #262b34;
+              position:relative; }
+  canvas#tl { width:100%; height:100%; display:block; }
+
+  @media (max-width: 700px) {
+    #toolbar h1, #legendbox span.lg { display:none; }
+    #timeline { height:80px; }
+    .panel { top:auto; bottom:0; left:0; right:0; width:100%; max-height:60%;
+             border-radius:14px 14px 0 0; }
+  }
 </style>
 </head>
 <body>
-<div id='side'>
+<div id='toolbar'>
   <h1>WiFi-Scanner</h1>
-  <div id='status'><span class='dot' style='background:#c0392b'></span>getrennt</div>
-  <div id='stats'></div>
-
-  <h2>Ansicht</h2>
   <select id='mode'>
     <option value='points'>Messpunkte</option>
-    <option value='heat'>Heatmap (interpoliert)</option>
-    <option value='forecast'>Prognose (simuliert)</option>
-    <option value='3d'>3D-R&auml;ume (Etagen-Stapel)</option>
+    <option value='heat'>Heatmap</option>
+    <option value='forecast'>Prognose</option>
+    <option value='3d'>3D-R&auml;ume</option>
   </select>
-
-  <h2>Etage</h2>
-  <select id='floor'><option value='all'>Alle</option></select>
-
-  <h2>Access Point</h2>
-  <select id='ap'><option value='all'>Alle</option></select>
-
-  <h2>Ebenen</h2>
-  <label><input type='checkbox' id='l_points' checked> Messpunkte</label>
-  <label><input type='checkbox' id='l_trail' checked> Laufpfad</label>
-  <label><input type='checkbox' id='l_rooms' checked> R&auml;ume</label>
-  <label><input type='checkbox' id='l_pose' checked> Position</label>
-  <label><input type='checkbox' id='l_ap' checked> AP-Standort</label>
-  <label><input type='checkbox' id='l_ping' checked> Pings</label>
-  <label><input type='checkbox' id='l_notes' checked> Notizen</label>
-  <label><input type='checkbox' id='l_roam' checked> Roaming</label>
-
-  <h2>Scans herunterladen</h2>
-  <button id='btnExport'>Aktuellen Scan exportieren</button>
-  <button id='btnZip'>Alle als ZIP</button>
-  <div id='files'></div>
+  <select id='floor'><option value='all'>Etage: Alle</option></select>
+  <select id='ap'><option value='all'>AP: Alle</option></select>
+  <span id='legendbox'>
+    <input type='number' id='lgWeak' value='-90' step='5' title='schwach (dBm)'>
+    <canvas id='legendbar' width='110' height='12'></canvas>
+    <input type='number' id='lgStrong' value='-40' step='5' title='stark (dBm)'>
+    <span class='lg'>dBm</span>
+  </span>
+  <button id='btnLayers'>&#9776; Ebenen</button>
+  <button id='btnFiles'>&#8681; Dateien</button>
+  <button id='btnCompare'>&#8646; Vergleich</button>
+  <span id='status'><span class='dot' style='background:#c0392b'></span>getrennt</span>
 </div>
-<div id='main'><canvas id='c'></canvas></div>
+
+<div id='stage'>
+  <canvas id='c'></canvas>
+  <div id='divider'></div>
+  <span class='divlabel' id='lblBefore' style='left:8px'>Vorher (Scan)</span>
+  <span class='divlabel' id='lblAfter' style='right:8px'>Jetzt (live)</span>
+  <div id='popup'></div>
+
+  <div class='panel' id='layers'>
+    <h2>Ebenen</h2>
+    <label><input type='checkbox' id='l_points' checked> Messpunkte</label>
+    <label><input type='checkbox' id='l_trail' checked> Laufpfad</label>
+    <label><input type='checkbox' id='l_rooms' checked> R&auml;ume</label>
+    <label><input type='checkbox' id='l_pose' checked> Position</label>
+    <label><input type='checkbox' id='l_ap' checked> AP-Standorte</label>
+    <label><input type='checkbox' id='l_ping' checked> Pings</label>
+    <label><input type='checkbox' id='l_notes' checked> Notizen</label>
+    <label><input type='checkbox' id='l_roam' checked> Roaming</label>
+    <h2>Statistik</h2>
+    <div id='stats' style='font-size:12px;color:#aeb6c4;white-space:pre-line'></div>
+  </div>
+
+  <div class='panel' id='drawer'>
+    <h2>Vergleichs-Scan (vorher)</h2>
+    <select id='cmpScan'><option value=''>&ndash; Scan w&auml;hlen &ndash;</option></select>
+    <h2>Aktionen</h2>
+    <button id='btnExport'>Aktuellen Scan exportieren</button>
+    <button id='btnReport'>Report &ouml;ffnen</button>
+    <button id='btnZip'>Alle als ZIP laden</button>
+    <h2><button id='btnFileList' style='width:100%'>Dateien anzeigen &#9656;</button></h2>
+    <div id='files' style='display:none'></div>
+  </div>
+</div>
+
+<div id='timeline'><canvas id='tl'></canvas></div>
 
 <script>
-const S = { points:[], pose:null, rooms:[], apfix:null, apfixAll:null, pings:[], notes:[], drills:[], trail:[], roams:[] };
-const L = { points:true, trail:true, rooms:true, pose:true, ap:true, ping:true, notes:true, roam:true };
+// ---------- state ----------
+const S = { points:[], pose:null, rooms:[], apfix:null, apfixAll:null, pings:[],
+            notes:[], drills:[], trail:[], roams:[] };
+const S2 = { points:[], rooms:[], loaded:false, stem:'' }; // Vergleich (vorher)
+const L = { points:true, trail:true, rooms:true, pose:true, ap:true, ping:true,
+            notes:true, roam:true };
 let mode = 'points';
 let floorSel = 'all';
 let apSel = 'all';
-const apsSeen = new Map();
-let gridYaw = 0; // radians; aligns the map like the in-headset minimap
+let gridYaw = 0;
+let rssiWeak = -90, rssiStrong = -40;   // editierbare Legende
+let compareOn = false, divFrac = 0.5, divDrag = false;
+let selected = null; // {kind, ...}
 const floorsSeen = new Set();
+const apsSeen = new Map();
+let floorBases = [], floorLabels = []; // Etagen (aus dem rooms-Paket)
+const hist = [];        // {t, r} RSSI-Verlauf (Ankunftszeit)
+const outages = [];     // {a, b} WS-Ausf&auml;lle
+let outageStart = 0;
 
 const cv = document.getElementById('c');
 const cx = cv.getContext('2d');
+const tl = document.getElementById('tl');
+const tx = tl.getContext('2d');
 const statusEl = document.getElementById('status');
 const statsEl = document.getElementById('stats');
+const popupEl = document.getElementById('popup');
+const dividerEl = document.getElementById('divider');
 
+// ---------- toolbar / panels ----------
 for (const k in L) {
   const el = document.getElementById('l_' + k);
   if (el) el.addEventListener('change', () => { L[k] = el.checked; draw(); });
@@ -103,26 +178,104 @@ for (const k in L) {
 document.getElementById('mode').addEventListener('change', e => { mode = e.target.value; draw(); });
 document.getElementById('floor').addEventListener('change', e => { floorSel = e.target.value; draw(); });
 document.getElementById('ap').addEventListener('change', e => { apSel = e.target.value; draw(); });
+document.getElementById('lgWeak').addEventListener('change', e => {
+  rssiWeak = parseInt(e.target.value) || -90; drawLegend(); fcKey = ''; draw(); });
+document.getElementById('lgStrong').addEventListener('change', e => {
+  rssiStrong = parseInt(e.target.value) || -40; drawLegend(); fcKey = ''; draw(); });
+
+function togglePanel(id, btn) {
+  const el = document.getElementById(id);
+  const show = el.style.display !== 'block';
+  document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
+  if (show) { el.style.display = 'block'; btn.classList.add('active'); }
+}
+document.getElementById('btnLayers').addEventListener('click', e => togglePanel('layers', e.target));
+document.getElementById('btnFiles').addEventListener('click', e => togglePanel('drawer', e.target));
+document.getElementById('btnCompare').addEventListener('click', e => {
+  if (!S2.loaded) { togglePanel('drawer', document.getElementById('btnFiles')); return; }
+  compareOn = !compareOn;
+  e.target.classList.toggle('active', compareOn);
+  updateCompareUi();
+  draw();
+});
 document.getElementById('btnExport').addEventListener('click', () => {
-  fetch('/export').then(() => setTimeout(loadFiles, 1500));
+  fetch('/export').then(() => setTimeout(loadFiles, 2000));
 });
 document.getElementById('btnZip').addEventListener('click', () => { location.href = '/download-all'; });
+document.getElementById('btnReport').addEventListener('click', () => {
+  // Neuesten Report aus der Dateiliste &ouml;ffnen.
+  fetch('/scans').then(r => r.json()).then(d => {
+    const reps = (d.files || []).filter(f => f.name.endsWith('_report.html'))
+      .sort((a, b) => b.name.localeCompare(a.name));
+    if (reps.length) window.open('/download?f=' + encodeURIComponent(reps[0].name), '_blank');
+    else alert('Noch kein Report - erst exportieren.');
+  }).catch(() => {});
+});
+document.getElementById('btnFileList').addEventListener('click', () => {
+  const box = document.getElementById('files');
+  const show = box.style.display !== 'block';
+  box.style.display = show ? 'block' : 'none';
+  document.getElementById('btnFileList').innerHTML =
+    show ? 'Dateien verbergen &#9662;' : 'Dateien anzeigen &#9656;';
+  if (show) loadFiles();
+});
+document.getElementById('cmpScan').addEventListener('change', e => loadCompare(e.target.value));
 
-function resize() { cv.width = cv.clientWidth; cv.height = cv.clientHeight; draw(); }
-window.addEventListener('resize', resize);
+function updateCompareUi() {
+  dividerEl.style.display = compareOn ? 'block' : 'none';
+  document.getElementById('lblBefore').style.display = compareOn ? 'block' : 'none';
+  document.getElementById('lblAfter').style.display = compareOn ? 'block' : 'none';
+  positionDivider();
+}
+function positionDivider() { dividerEl.style.left = (divFrac * cv.clientWidth) + 'px'; }
+dividerEl.addEventListener('pointerdown', e => { divDrag = true; e.preventDefault(); });
+window.addEventListener('pointermove', e => {
+  if (!divDrag) return;
+  const r = cv.getBoundingClientRect();
+  divFrac = Math.min(0.95, Math.max(0.05, (e.clientX - r.left) / r.width));
+  positionDivider();
+  draw();
+});
+window.addEventListener('pointerup', () => { divDrag = false; });
 
+// Vergleichs-Scan (Sample-JSON) vom Ger&auml;t laden.
+function loadCompare(name) {
+  if (!name) { S2.loaded = false; compareOn = false; updateCompareUi(); draw(); return; }
+  fetch('/download?f=' + encodeURIComponent(name)).then(r => r.json()).then(d => {
+    S2.points = (d.samples || []).map(s => ({ x: s.posX, y: s.posY || 0, z: s.posZ,
+      r: s.rssiDbm, f: s.floor || 0, b: s.bssid || '' }));
+    S2.stem = name.replace('.json', '');
+    // Passenden Grundriss dazuladen (falls vorhanden).
+    fetch('/download?f=' + encodeURIComponent(S2.stem + '_rooms.json'))
+      .then(r => r.ok ? r.json() : null).then(rd => {
+        S2.rooms = rd && rd.rooms ? rd.rooms : [];
+        S2.loaded = true;
+        compareOn = true;
+        document.getElementById('btnCompare').classList.add('active');
+        updateCompareUi();
+        draw();
+      }).catch(() => { S2.rooms = []; S2.loaded = true; compareOn = true; updateCompareUi(); draw(); });
+  }).catch(() => alert('Scan konnte nicht geladen werden.'));
+}
+
+// ---------- websocket ----------
 function connect() {
   const ws = new WebSocket('ws://' + location.host + '/ws');
-  ws.onopen = () => { statusEl.innerHTML = `<span class='dot' style='background:#27ae60'></span>verbunden`; };
+  ws.onopen = () => {
+    statusEl.innerHTML = `<span class='dot' style='background:#27ae60'></span>live`;
+    if (outageStart) { outages.push({ a: outageStart, b: Date.now() }); outageStart = 0; }
+  };
   ws.onclose = () => {
     statusEl.innerHTML = `<span class='dot' style='background:#c0392b'></span>getrennt`;
+    if (!outageStart) outageStart = Date.now();
     setTimeout(connect, 1500);
   };
   ws.onmessage = ev => { try { handle(JSON.parse(ev.data)); } catch (e) {} };
 }
 
 function handle(m) {
-  if (!m.type) { addPoint(m); draw(); return; }
+  if (!m.type) { addPoint(m); draw(); drawTimeline(); return; }
   if (m.gridYawDegrees !== undefined) gridYaw = m.gridYawDegrees * Math.PI / 180;
   switch (m.type) {
     case 'samplebatch': (m.items || []).forEach(addPoint); break;
@@ -135,15 +288,21 @@ function handle(m) {
       }
       break;
     }
-    case 'rooms': S.rooms = m.rooms || []; break;
+    case 'rooms':
+      S.rooms = m.rooms || [];
+      floorBases = m.floorBases || [];
+      floorLabels = m.floorLabels || [];
+      relabelFloorOptions();
+      break;
     case 'apfix': S.apfix = m; S.apfixAll = m.aps || null; break;
     case 'ping': S.pings = m.nodes || []; break;
     case 'notes': S.notes = m.notes || []; break;
     case 'drill': S.drills = m.lines || []; break;
     case 'roam': S.roams = m.events || []; break;
-    case 'clear': S.points = []; break;
+    case 'clear': S.points = []; hist.length = 0; break;
   }
   draw();
+  drawTimeline();
 }
 
 function bandLabel(freq) {
@@ -153,16 +312,40 @@ function bandLabel(freq) {
   return '?';
 }
 
+// Etagen-Zuordnung: Index der Etage direkt unter y (wie FloorIndexForY).
+function floorIndexForY(y) {
+  let idx = 0;
+  for (let i = 0; i < floorBases.length; i++)
+    if (y >= floorBases[i] - 0.5) idx = i;
+  return idx;
+}
+function floorName(f) {
+  return floorLabels[f] !== undefined ? floorLabels[f] : 'Etage ' + (f + 1);
+}
+function relabelFloorOptions() {
+  document.querySelectorAll(`#floor option`).forEach(o => {
+    if (o.value !== 'all') o.textContent = floorName(parseInt(o.value));
+    else o.textContent = 'Etage: Alle';
+  });
+}
+// Nur Räume der gewählten Etage (kein Etagenwissen -> alle zeigen).
+function roomOnSelectedFloor(room) {
+  if (floorSel === 'all' || !floorBases.length) return true;
+  return floorIndexForY((room.floorY || 0) + 0.1) === parseInt(floorSel);
+}
+
 function addPoint(s) {
   const f = s.floor || 0;
   const b = s.bssid || '';
   S.points.push({ x: s.posX, y: s.posY || 0, z: s.posZ, r: s.rssiDbm, f: f, b: b });
   if (S.points.length > 8000) S.points.shift();
+  hist.push({ t: Date.now(), r: s.rssiDbm });
+  if (hist.length > 4000) hist.shift();
   if (!floorsSeen.has(f)) {
     floorsSeen.add(f);
     const sel = document.getElementById('floor');
     const o = document.createElement('option');
-    o.value = f; o.textContent = 'Etage ' + (f + 1); // Index, unterste zuerst
+    o.value = f; o.textContent = floorName(f);
     sel.appendChild(o);
   }
   if (b && !apsSeen.has(b)) {
@@ -176,45 +359,72 @@ function addPoint(s) {
   }
 }
 
+// ---------- colours / legend ----------
 function rssiColor(r) {
-  let t = (r - (-90)) / ((-40) - (-90));
+  let t = (r - rssiWeak) / (rssiStrong - rssiWeak);
   t = Math.max(0, Math.min(1, t));
   let cr, cg;
   if (t < 0.5) { cr = 220; cg = Math.round(60 + t * 2 * 160); }
   else { cr = Math.round(220 - (t - 0.5) * 2 * 180); cg = 200; }
   return `rgb(${cr},${cg},70)`;
 }
+function drawLegend() {
+  const lc = document.getElementById('legendbar').getContext('2d');
+  for (let x = 0; x < 110; x++) {
+    lc.fillStyle = rssiColor(rssiWeak + (rssiStrong - rssiWeak) * x / 109);
+    lc.fillRect(x, 0, 1, 12);
+  }
+}
 
-function activePoints() {
-  return S.points.filter(p =>
+// ---------- transforms ----------
+function filterPoints(list) {
+  return list.filter(p =>
     (floorSel === 'all' || String(p.f) === String(floorSel)) &&
     (apSel === 'all' || p.b === apSel));
 }
+function activePoints() { return filterPoints(S.points); }
 
-// World XZ -> grid space (rotated by -gridYaw), matching the minimap so walls
-// come out axis-aligned. Mirrors FloorHeatmapRenderer.WorldToMapXZ.
 function gr(x, z) {
   const c = Math.cos(gridYaw), s = Math.sin(gridYaw);
   return [x * c - z * s, x * s + z * c];
 }
 function P(x, z) { const g = gr(x, z); return [sx(g[0]), sy(g[1])]; }
 
-let T = { minx:0, minz:0, scale:1, cw:0, ch:0 };
+let T = { minx:0, minz:0, scale:1, ox:0, oy:0, ch:0 };
 function computeTransform(pts) {
   let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
-  const add = (x, z) => { const g = gr(x, z); if (g[0] < minx) minx = g[0]; if (g[0] > maxx) maxx = g[0]; if (g[1] < minz) minz = g[1]; if (g[1] > maxz) maxz = g[1]; };
+  const add = (x, z) => { const g = gr(x, z);
+    if (g[0] < minx) minx = g[0]; if (g[0] > maxx) maxx = g[0];
+    if (g[1] < minz) minz = g[1]; if (g[1] > maxz) maxz = g[1]; };
   pts.forEach(p => add(p.x, p.z));
   if (L.rooms || mode === 'forecast')
-    S.rooms.forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
+    S.rooms.filter(roomOnSelectedFloor)
+      .forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
+  if (compareOn) {
+    filterPoints(S2.points).forEach(p => add(p.x, p.z));
+    S2.rooms.filter(roomOnSelectedFloor)
+      .forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
+  }
   if (minx > maxx) { minx = -2; maxx = 2; minz = -2; maxz = 2; }
   const pad = 0.6;
   minx -= pad; maxx += pad; minz -= pad; maxz += pad;
   const cw = cv.width, ch = cv.height;
   const scale = Math.min(cw / (maxx - minx), ch / (maxz - minz));
-  T = { minx, minz, scale, ox: (cw - (maxx - minx) * scale) / 2, oy: (ch - (maxz - minz) * scale) / 2, ch };
+  T = { minx, minz, scale, ox: (cw - (maxx - minx) * scale) / 2,
+        oy: (ch - (maxz - minz) * scale) / 2, ch };
 }
 function sx(x) { return (x - T.minx) * T.scale + T.ox; }
 function sy(z) { return T.ch - ((z - T.minz) * T.scale + T.oy); }
+
+// ---------- main draw ----------
+function resize() {
+  cv.width = cv.clientWidth; cv.height = cv.clientHeight;
+  tl.width = tl.clientWidth; tl.height = tl.clientHeight;
+  positionDivider();
+  draw();
+  drawTimeline();
+}
+window.addEventListener('resize', resize);
 
 function draw() {
   const pts = activePoints();
@@ -227,6 +437,36 @@ function draw() {
   computeTransform(pts);
   cx.clearRect(0, 0, cv.width, cv.height);
 
+  const split = compareOn && (mode === 'points' || mode === 'heat');
+  if (split) {
+    const dx = divFrac * cv.width;
+    // Links: Vorher-Scan (Punkte/Heatmap + gestrichelter Grundriss).
+    cx.save();
+    cx.beginPath(); cx.rect(0, 0, dx, cv.height); cx.clip();
+    const refPts = filterPoints(S2.points);
+    if (mode === 'heat') drawHeatmap(refPts);
+    else refPts.forEach(p => {
+      cx.fillStyle = rssiColor(p.r);
+      const q = P(p.x, p.z);
+      cx.fillRect(q[0] - 3, q[1] - 3, 6, 6);
+    });
+    cx.setLineDash([6, 4]);
+    S2.rooms.filter(roomOnSelectedFloor).forEach(drawRoom);
+    cx.setLineDash([]);
+    cx.restore();
+    // Rechts: live.
+    cx.save();
+    cx.beginPath(); cx.rect(dx, 0, cv.width - dx, cv.height); cx.clip();
+    drawLive(pts);
+    cx.restore();
+  } else {
+    drawLive(pts);
+  }
+  if (selected) drawSelectionRing();
+  updateStats(pts.length);
+}
+
+function drawLive(pts) {
   if (mode === 'heat') drawHeatmap(pts);
   else if (mode === 'forecast') drawForecast();
   else if (L.points) pts.forEach(p => {
@@ -234,31 +474,27 @@ function draw() {
     const q = P(p.x, p.z);
     cx.fillRect(q[0] - 3, q[1] - 3, 6, 6);
   });
-
   if (L.trail) drawTrail();
-  if (L.rooms) S.rooms.forEach(drawRoom);
+  if (L.rooms) S.rooms.filter(roomOnSelectedFloor).forEach(drawRoom);
   if (L.ping) S.pings.forEach(drawPing);
   if (L.notes) S.notes.forEach(drawNote);
   if (L.roam) S.roams.forEach(drawRoam);
   if (L.ap) drawAps();
   if (L.pose && S.pose) drawPose(S.pose);
-
-  updateStats(pts.length);
 }
 
-// Client-side IDW heatmap (power 2), same idea as the in-app floor heatmap:
-// a coarse grid in grid-space, each cell the inverse-distance-weighted RSSI of
-// nearby points; cells with no measurement within R stay empty (gap).
+// ---------- heatmap (IDW) ----------
 function drawHeatmap(pts) {
   if (!pts.length) return;
   const gp = pts.map(p => { const g = gr(p.x, p.z); return { x: g[0], z: g[1], r: p.r }; });
   let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
-  gp.forEach(p => { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; if (p.z < minz) minz = p.z; if (p.z > maxz) maxz = p.z; });
+  gp.forEach(p => { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x;
+    if (p.z < minz) minz = p.z; if (p.z > maxz) maxz = p.z; });
   const R = 1.2, R2 = R * R;
   const area = Math.max(0.5, maxx - minx) * Math.max(0.5, maxz - minz);
   const cell = Math.max(0.15, Math.sqrt(area / 18000));
   const hash = new Map();
-  const key = (cx2, cz2) => cx2 + ',' + cz2;
+  const key = (a, b) => a + ',' + b;
   gp.forEach(p => {
     const k = key(Math.floor(p.x / R), Math.floor(p.z / R));
     let a = hash.get(k); if (!a) { a = []; hash.set(k, a); } a.push(p);
@@ -285,12 +521,8 @@ function drawHeatmap(pts) {
   }
 }
 
-// ---- Coverage forecast: same model as the in-app CoverageSimulator ----
-// (P1m − 10·n·log10(d) − 5 dB per crossed wall). AP priority: virtual-AP
-// notes → real fix; without any AP the field renders solid red (alarm).
-// Cached into an offscreen canvas — the simulation is too heavy per frame.
+// ---------- forecast (cached) ----------
 let fcCanvas = null, fcKey = '';
-
 function forecastKey() {
   const vaps = (S.notes || []).filter(n => n.type === 'VirtualAp')
     .map(n => [n.posX.toFixed(2), n.posZ.toFixed(2)]);
@@ -298,9 +530,9 @@ function forecastKey() {
     S.apfix.pathLossN, S.apfix.powerAt1m] : null;
   return JSON.stringify([S.rooms.length,
     S.rooms.map(r => (r.cornersXZ || []).length), vaps, ap, gridYaw,
-    cv.width, cv.height, T.minx, T.minz, T.scale]);
+    cv.width, cv.height, T.minx, T.minz, T.scale, rssiWeak, rssiStrong,
+    floorSel]);
 }
-
 function drawForecast() {
   if (!S.rooms.length) {
     label('Prognose: erst Räume zeichnen', cv.width / 2, 24, '#e0a03c');
@@ -313,16 +545,13 @@ function drawForecast() {
   if (!hasAp)
     label('Kein AP: virtuellen AP setzen (Notiz) oder messen', cv.width / 2, 24, '#ff5544');
 }
-
 function renderForecast() {
   fcCanvas = document.createElement('canvas');
   fcCanvas.width = cv.width; fcCanvas.height = cv.height;
   const fc = fcCanvas.getContext('2d');
-
-  // Walls + bounds in grid space.
   const walls = [];
   let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
-  S.rooms.forEach(r => {
+  S.rooms.filter(roomOnSelectedFloor).forEach(r => {
     const c = r.cornersXZ || [], n = c.length;
     for (let i = 0; i < n; i++) {
       const a = gr(c[i].x, c[i].y), b = gr(c[(i + 1) % n].x, c[(i + 1) % n].y);
@@ -333,8 +562,6 @@ function renderForecast() {
   });
   if (!walls.length) return;
   minx -= 1; maxx += 1; minz -= 1; maxz += 1;
-
-  // AP sources: virtual notes first, else the fitted real AP.
   const n = (S.apfix && S.apfix.pathLossN) ? S.apfix.pathLossN : 2.7;
   const aps = [];
   (S.notes || []).forEach(nt => {
@@ -347,7 +574,6 @@ function renderForecast() {
     const g = gr(S.apfix.posX, S.apfix.posZ);
     aps.push({ x: g[0], z: g[1], p1: (S.apfix.powerAt1m || -40), n: n });
   }
-
   const cell = Math.max(0.15,
     Math.sqrt(Math.max(0.5, maxx - minx) * Math.max(0.5, maxz - minz) / 15000));
   const cs = cell * T.scale + 1;
@@ -373,7 +599,6 @@ function renderForecast() {
     }
   }
 }
-
 function segInt(p1x, p1z, p2x, p2z, q1x, q1z, q2x, q2z) {
   const d1 = (q2x - q1x) * (p1z - q1z) - (q2z - q1z) * (p1x - q1x);
   const d2 = (q2x - q1x) * (p2z - q1z) - (q2z - q1z) * (p2x - q1x);
@@ -383,6 +608,7 @@ function segInt(p1x, p1z, p2x, p2z, q1x, q1z, q2x, q2z) {
          ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
 }
 
+// ---------- overlays ----------
 function drawTrail() {
   if (S.trail.length < 2) return;
   cx.strokeStyle = '#ff9d3c';
@@ -426,6 +652,12 @@ function drawRoom(room) {
     }
     if (cur < 1) seg(cur, 1);
   }
+  if (room.name) {
+    let cxm = 0, czm = 0;
+    c.forEach(p => { cxm += p.x; czm += p.y; });
+    const q = P(cxm / n, czm / n);
+    label(room.name, q[0], q[1], '#8fd4ff');
+  }
 }
 
 function drawOpening(a, b, f0, f1, isDoor) {
@@ -441,7 +673,6 @@ function drawOpening(a, b, f0, f1, isDoor) {
 function drawPose(p) {
   const q = P(p.posX, p.posZ);
   const a = p.yawDeg * Math.PI / 180;
-  // Heading tip in world, projected through the same grid rotation.
   const tip = P(p.posX + Math.sin(a) * 0.6, p.posZ + Math.cos(a) * 0.6);
   cx.fillStyle = '#25b7dd';
   cx.beginPath(); cx.arc(q[0], q[1], 6, 0, 7); cx.fill();
@@ -449,7 +680,6 @@ function drawPose(p) {
   cx.beginPath(); cx.moveTo(q[0], q[1]); cx.lineTo(tip[0], tip[1]); cx.stroke();
 }
 
-// One AP estimate per BSSID; the AP dropdown filters which are drawn.
 function drawAps() {
   if (S.apfixAll && S.apfixAll.length) {
     S.apfixAll.forEach(ap => {
@@ -468,20 +698,6 @@ function drawAps() {
   }
 }
 
-function drawRoam(ev) {
-  const q = P(ev.posX, ev.posZ);
-  cx.fillStyle = '#ff9d3c';
-  cx.beginPath();
-  cx.moveTo(q[0], q[1] - 7);
-  cx.lineTo(q[0] + 7, q[1]);
-  cx.lineTo(q[0], q[1] + 7);
-  cx.lineTo(q[0] - 7, q[1]);
-  cx.closePath();
-  cx.fill();
-  label('Roaming ' + bandLabel(ev.fromFrequencyMhz) + ' → ' +
-    bandLabel(ev.toFrequencyMhz), q[0], q[1] - 12, '#ff9d3c');
-}
-
 function drawPing(p) {
   const q = P(p.posX, p.posZ);
   const ms = p.latencyMs;
@@ -495,6 +711,18 @@ function drawNote(nt) {
   cx.fillStyle = nt.type === 'VirtualAp' ? '#25b7dd' : nt.type === 'Interference' ? '#dd4433' : '#cccccc';
   cx.fillRect(q[0] - 5, q[1] - 5, 10, 10);
   if (nt.text) label(nt.text, q[0], q[1] - 12, '#ddd');
+}
+
+function drawRoam(ev) {
+  const q = P(ev.posX, ev.posZ);
+  cx.fillStyle = '#ff9d3c';
+  cx.beginPath();
+  cx.moveTo(q[0], q[1] - 7);
+  cx.lineTo(q[0] + 7, q[1]);
+  cx.lineTo(q[0], q[1] + 7);
+  cx.lineTo(q[0] - 7, q[1]);
+  cx.closePath();
+  cx.fill();
 }
 
 function star(x, y, ri, ro, pts) {
@@ -518,7 +746,7 @@ function label(text, x, y, color) {
   cx.fillText(text, x, y);
 }
 
-// ---- 3D view: all storeys' extruded rooms stacked, orbit by dragging ----
+// ---------- 3D view ----------
 let yaw3 = 0.8, pitch3 = 0.5, zoom3 = 1;
 const roomPalette = ['#5aa0d8', '#7cd85a', '#d8a05a', '#c05ad8', '#5ad8c8', '#d85a6e'];
 
@@ -548,23 +776,18 @@ function draw3d(pts) {
   const cyaw = Math.cos(yaw3), syaw = Math.sin(yaw3);
   const cp = Math.cos(pitch3), sp = Math.sin(pitch3);
   const V = (x, y, z) => {
-    // X negated: Unity is left-handed — without the mirror the floor plan
-    // appears flipped (same convention as the OBJ export).
+    // X negiert: Unity ist linkshändig (gleiche Konvention wie OBJ-Export).
     const dx = ctr.x - x, dy = y - ctr.y, dz = z - ctr.z;
     const rx = dx * cyaw - dz * syaw;
     const rz = dx * syaw + dz * cyaw;
     const ry = dy * cp - rz * sp;
     return [cv.width / 2 + rx * scale3, cv.height / 2 - ry * scale3];
   };
-
-  // Measurement points as small colour cubes at their true height.
   if (L.points) pts.forEach(p => {
     const q = V(p.x, p.y, p.z);
     cx.fillStyle = rssiColor(p.r);
     cx.fillRect(q[0] - 2, q[1] - 2, 4, 4);
   });
-
-  // Rooms: base + top loop + verticals; colour rotates per room.
   S.rooms.forEach((r, ri) => {
     const c = r.cornersXZ || [];
     if (c.length < 3) return;
@@ -587,8 +810,13 @@ function draw3d(pts) {
       const a = V(p.x, y0, p.y), b = V(p.x, y0 + h, p.y);
       cx.beginPath(); cx.moveTo(a[0], a[1]); cx.lineTo(b[0], b[1]); cx.stroke();
     }
+    if (r.name) {
+      let cxm = 0, czm = 0;
+      c.forEach(p => { cxm += p.x; czm += p.y; });
+      const q = V(cxm / c.length, y0 + 1.2, czm / c.length);
+      label(r.name, q[0], q[1], '#8fd4ff');
+    }
   });
-
   if (L.ap && S.apfix) {
     const q = V(S.apfix.posX, S.apfix.posY, S.apfix.posZ);
     cx.fillStyle = '#00d2ff';
@@ -600,16 +828,15 @@ function draw3d(pts) {
     cx.fillStyle = '#25b7dd';
     cx.beginPath(); cx.arc(q[0], q[1], 5, 0, 7); cx.fill();
   }
-
   label('Ziehen = drehen, Rad/Pinch = Zoom', cv.width / 2, cv.height - 8, '#8a93a6');
 }
 
-// Orbit input: mouse drag / one-finger drag rotates, wheel zooms.
-let dragging = false, lastX = 0, lastY = 0, lastPinch = 0;
-cv.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+let dragging = false, lastX = 0, lastY = 0, lastPinch = 0, moved = false;
+cv.addEventListener('mousedown', e => { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; });
 window.addEventListener('mouseup', () => { dragging = false; });
 window.addEventListener('mousemove', e => {
   if (!dragging || mode !== '3d') return;
+  moved = true;
   yaw3 += (e.clientX - lastX) * 0.008;
   pitch3 = Math.max(0.05, Math.min(1.5, pitch3 + (e.clientY - lastY) * 0.006));
   lastX = e.clientX; lastY = e.clientY;
@@ -644,35 +871,186 @@ cv.addEventListener('touchmove', e => {
   draw();
 }, { passive: false });
 
+// ---------- selection tool ----------
+cv.addEventListener('click', e => {
+  if (mode === '3d' && moved) return; // Orbit-Drag ist keine Auswahl
+  if (mode === '3d') return;
+  const r = cv.getBoundingClientRect();
+  pick(e.clientX - r.left, e.clientY - r.top);
+});
+
+function pick(px, py) {
+  const hitR = 14;
+  let best = null, bestD = hitR;
+  const test = (q, obj) => {
+    const d = Math.hypot(q[0] - px, q[1] - py);
+    if (d < bestD) { bestD = d; best = obj; }
+  };
+  if (S.apfixAll) S.apfixAll.forEach(ap => {
+    if (apSel !== 'all' && ap.bssid !== apSel) return;
+    test(P(ap.posX, ap.posZ), { kind: 'ap', ap });
+  });
+  S.notes.forEach(n => test(P(n.posX, n.posZ), { kind: 'note', n }));
+  S.pings.forEach(p => test(P(p.posX, p.posZ), { kind: 'ping', p }));
+  S.roams.forEach(ev => test(P(ev.posX, ev.posZ), { kind: 'roam', ev }));
+  activePoints().forEach(p => test(P(p.x, p.z), { kind: 'point', p }));
+
+  selected = best;
+  if (!best) { popupEl.style.display = 'none'; draw(); return; }
+  let txt = '';
+  if (best.kind === 'point')
+    txt = 'Messpunkt\nRSSI: ' + best.p.r + ' dBm\nEtage ' + (best.p.f + 1) +
+      (best.p.b ? '\nAP: …' + best.p.b.slice(-5) : '') +
+      '\nx ' + best.p.x.toFixed(2) + ' / z ' + best.p.z.toFixed(2) + ' m';
+  else if (best.kind === 'ap')
+    txt = 'Access Point\n' + (best.ap.ssid || '?') + ' · ' +
+      bandLabel(best.ap.frequencyMhz || 0) + '\nBSSID …' +
+      (best.ap.bssid || '').slice(-8) + '\nmax ' + best.ap.strongestRssi +
+      ' dBm · ±' + (best.ap.radius || 0).toFixed(1) + ' m\nn = ' +
+      (best.ap.pathLossN || 0).toFixed(2) + ' · P1m = ' +
+      (best.ap.powerAt1m || 0).toFixed(1) + ' dBm';
+  else if (best.kind === 'note')
+    txt = 'Notiz (' + best.n.type + ')\n' + (best.n.text || '');
+  else if (best.kind === 'ping')
+    txt = 'Ping-Knoten\n' +
+      (best.p.latencyMs < 0 ? 'Fehler' : best.p.latencyMs + ' ms');
+  else if (best.kind === 'roam')
+    txt = 'Roaming\n…' + (best.ev.fromBssid || '').slice(-5) + ' → …' +
+      (best.ev.toBssid || '').slice(-5) + '\n' +
+      bandLabel(best.ev.fromFrequencyMhz) + ' → ' + bandLabel(best.ev.toFrequencyMhz);
+  popupEl.textContent = txt;
+  popupEl.style.display = 'block';
+  popupEl.style.left = Math.min(px + 14, cv.width - 250) + 'px';
+  popupEl.style.top = Math.max(6, py - 10) + 'px';
+  draw();
+}
+
+function selectionPos() {
+  const s = selected;
+  if (!s) return null;
+  if (s.kind === 'point') return P(s.p.x, s.p.z);
+  if (s.kind === 'ap') return P(s.ap.posX, s.ap.posZ);
+  if (s.kind === 'note') return P(s.n.posX, s.n.posZ);
+  if (s.kind === 'ping') return P(s.p.posX, s.p.posZ);
+  if (s.kind === 'roam') return P(s.ev.posX, s.ev.posZ);
+  return null;
+}
+function drawSelectionRing() {
+  const q = selectionPos();
+  if (!q) return;
+  cx.strokeStyle = '#ffffff';
+  cx.lineWidth = 2;
+  cx.beginPath();
+  cx.arc(q[0], q[1], 11, 0, 7);
+  cx.stroke();
+}
+
+// ---------- timeline ----------
+function drawTimeline() {
+  const w = tl.width, h = tl.height;
+  tx.clearRect(0, 0, w, h);
+  if (!hist.length) {
+    tx.fillStyle = '#5a6472';
+    tx.font = '12px system-ui';
+    tx.fillText('Aufnahmeverlauf erscheint mit den ersten Messpunkten …', 10, h / 2);
+    return;
+  }
+  const t0 = hist[0].t;
+  const t1 = Math.max(Date.now(), t0 + 60000);
+  const X = t => 4 + (t - t0) / (t1 - t0) * (w - 8);
+  const Y = r => {
+    const lo = rssiWeak - 5, hi = rssiStrong + 5;
+    return h - 16 - (Math.max(lo, Math.min(hi, r)) - lo) / (hi - lo) * (h - 26);
+  };
+  // Ausfälle (rote Bänder).
+  tx.fillStyle = 'rgba(200,40,40,0.25)';
+  outages.forEach(o => tx.fillRect(X(o.a), 0, Math.max(2, X(o.b) - X(o.a)), h));
+  if (outageStart) tx.fillRect(X(outageStart), 0, Math.max(2, X(Date.now()) - X(outageStart)), h);
+  // Schwellenlinie.
+  tx.strokeStyle = '#333b48';
+  tx.setLineDash([3, 4]);
+  tx.beginPath(); tx.moveTo(0, Y(-75)); tx.lineTo(w, Y(-75)); tx.stroke();
+  tx.setLineDash([]);
+  // RSSI-Verlauf.
+  tx.strokeStyle = '#4a90c8';
+  tx.lineWidth = 1.5;
+  tx.beginPath();
+  hist.forEach((p2, i) => {
+    const x = X(p2.t), y = Y(p2.r);
+    i ? tx.lineTo(x, y) : tx.moveTo(x, y);
+  });
+  tx.stroke();
+  // Roaming-Ticks.
+  tx.fillStyle = '#ff9d3c';
+  S.roams.forEach(ev => {
+    const x = X(ev.timestampMs);
+    if (x >= 0 && x <= w) { tx.fillRect(x - 1, 0, 2, h); }
+  });
+  // Aktuelle Leistungswerte.
+  const last = hist[hist.length - 1];
+  tx.fillStyle = '#aeb6c4';
+  tx.font = '11px system-ui';
+  tx.textAlign = 'left';
+  tx.fillText('RSSI ' + last.r + ' dBm · ' + S.points.length + ' Punkte · ' +
+    S.roams.length + ' Roaming · ' + outages.length + ' Ausfälle', 8, 13);
+  tx.textAlign = 'right';
+  tx.fillText(new Date(t0).toLocaleTimeString() + ' – ' +
+    new Date(t1).toLocaleTimeString(), w - 8, 13);
+  tx.textAlign = 'left';
+}
+setInterval(drawTimeline, 2000);
+
+// ---------- stats / files ----------
 function updateStats(shown) {
   const last = S.points[S.points.length - 1];
-  // textContent decodes NOTHING — literal umlauts, no HTML entities here.
   statsEl.textContent =
     'Punkte: ' + S.points.length + ' (angezeigt ' + shown + ')\n' +
     'Räume: ' + S.rooms.length + '   Pings: ' + S.pings.length + '\n' +
     'Notizen: ' + S.notes.length + '   APs: ' + apsSeen.size +
     '   Roaming: ' + S.roams.length +
+    (compareOn ? '\nVergleich: ' + S2.stem : '') +
     (last ? '\nLetzte: ' + last.r + ' dBm' : '');
+}
+
+const sidecars = ['_rooms', '_drill', '_apfix', '_ping', '_notes', '_measure',
+  '_heatmap', '_walls', '_report', '_coverage', '_roam'];
+function isScanJson(name) {
+  if (!name.endsWith('.json')) return false;
+  const stem = name.slice(0, -5);
+  return !sidecars.some(sfx => stem.endsWith(sfx) || stem.includes(sfx + '_'));
 }
 
 function loadFiles() {
   fetch('/scans').then(r => r.json()).then(d => {
+    const files = (d.files || []);
     const box = document.getElementById('files');
     box.innerHTML = '';
-    (d.files || []).sort((a, b) => a.name.localeCompare(b.name)).forEach(f => {
+    files.sort((a, b) => a.name.localeCompare(b.name)).forEach(f => {
       const a = document.createElement('a');
       a.href = '/download?f=' + encodeURIComponent(f.name);
       a.innerHTML = f.name + ` <span class='sz'>(${(f.size / 1024).toFixed(0)} kB)</span>`;
       box.appendChild(a);
     });
-    if (!(d.files || []).length) box.textContent = '(keine Dateien)';
+    if (!files.length) box.textContent = '(keine Dateien)';
+    // Vergleichs-Auswahl: nur ladbare Sample-JSONs.
+    const sel = document.getElementById('cmpScan');
+    const cur = sel.value;
+    sel.innerHTML = `<option value=''>&ndash; Scan w&auml;hlen &ndash;</option>`;
+    files.filter(f => isScanJson(f.name)).forEach(f => {
+      const o = document.createElement('option');
+      o.value = f.name;
+      o.textContent = f.name.replace('.json', '');
+      sel.appendChild(o);
+    });
+    sel.value = cur;
   }).catch(() => {});
 }
 
+drawLegend();
 resize();
 connect();
 loadFiles();
-setInterval(loadFiles, 10000);
+setInterval(loadFiles, 15000);
 </script>
 </body>
 </html>";

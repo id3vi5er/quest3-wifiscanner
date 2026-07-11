@@ -327,16 +327,19 @@ namespace WifiScanner
         }
 
         /// <summary>
-        /// Writes the manually traced rooms as a real-scale SVG floor plan
-        /// (1 SVG user unit = 1 mm, width/height in mm => defined real
-        /// measurements) with each wall labelled with its length in metres,
-        /// plus the raw corners as JSON (basis for a later 3D export).
+        /// Writes traced rooms as a real-scale SVG floor plan (1 SVG user unit
+        /// = 1 mm) with each wall labelled with its length in metres. With
+        /// multiple storeys the caller invokes this once PER STOREY with a
+        /// "_EG"/"_OG1"-style <paramref name="fileSuffix"/> and only that
+        /// storey's rooms — one readable plan per floor. The raw corners JSON
+        /// (ALL rooms) rides along unless <paramref name="writeJson"/> is off.
         /// Corners are rotated into grid space so walls are axis-parallel
         /// after the wall calibration.
         /// </summary>
         public static string ExportRoomsSvg(IReadOnlyList<RoomOutline> rooms,
             float gridYawDegrees, string stem,
-            IReadOnlyList<DrillLine> drills = null)
+            IReadOnlyList<DrillLine> drills = null, string fileSuffix = "",
+            bool writeJson = true)
         {
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             string dir = Application.persistentDataPath;
@@ -355,26 +358,38 @@ namespace WifiScanner
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{0:F0}mm\" " +
                 "height=\"{1:F0}mm\" viewBox=\"0 0 {0:F0} {1:F0}\">", w, h));
             sb.AppendLine(string.Format(inv,
-                "  <!-- Quest3 WiFi-Scanner Grundriss | {0:yyyy-MM-dd HH:mm} | " +
+                "  <!-- Quest3 WiFi-Scanner Grundriss{3} | {0:yyyy-MM-dd HH:mm} | " +
                 "1 unit = 1 mm | gridYaw {1:F1} deg | {2} Raum/Räume -->",
-                DateTime.Now, gridYawDegrees, rooms.Count));
+                DateTime.Now, gridYawDegrees, rooms.Count,
+                fileSuffix.Length > 0 ? " Etage " + fileSuffix.TrimStart('_') : ""));
             AppendRoomShapes(sb, rooms, roomsMm, offset, haloText: false);
             AppendDrillMarks(sb, drills, gridYawDegrees, offset);
             sb.AppendLine("</svg>");
 
-            string svgPath = Path.Combine(dir, $"{stem}_rooms.svg");
+            string svgPath = Path.Combine(dir, $"{stem}_rooms{fileSuffix}.svg");
             File.WriteAllText(svgPath, sb.ToString());
 
+            if (writeJson)
+                ExportRoomsJson(rooms, gridYawDegrees, stem);
+
+            Debug.Log($"[DataExporter] Wrote {rooms.Count} room outline(s) to {svgPath}");
+            return svgPath;
+        }
+
+        /// <summary>All room outlines (every storey) as JSON — the loadable
+        /// data file behind the per-storey SVG plans.</summary>
+        public static string ExportRoomsJson(IReadOnlyList<RoomOutline> rooms,
+            float gridYawDegrees, string stem)
+        {
             var wrapper = new RoomList
             {
                 gridYawDegrees = gridYawDegrees,
                 rooms = new List<RoomOutline>(rooms),
             };
-            File.WriteAllText(Path.Combine(dir, $"{stem}_rooms.json"),
-                JsonUtility.ToJson(wrapper, true));
-
-            Debug.Log($"[DataExporter] Wrote {rooms.Count} room outline(s) to {svgPath}");
-            return svgPath;
+            string path = Path.Combine(Application.persistentDataPath,
+                $"{stem}_rooms.json");
+            File.WriteAllText(path, JsonUtility.ToJson(wrapper, true));
+            return path;
         }
 
         /// <summary>
@@ -525,14 +540,49 @@ namespace WifiScanner
 
         /// <summary>
         /// Floor plan SVG with the estimated wall attenuations written directly
-        /// on the walls ({stem}_walls.svg) — the wall-loss table alone is hard
-        /// to map to real walls. Same real-scale mm layout as the rooms SVG;
-        /// the dB labels sit beside each wall's midpoint, offset into the room
-        /// (the wall LENGTH label sits on the midpoint itself).
+        /// on the walls ({stem}_walls{suffix}.svg) — the wall-loss table alone
+        /// is hard to map to real walls. With multiple storeys the caller
+        /// invokes this once per storey (<paramref name="floorBaseY"/> filters
+        /// the rooms, loss indices are remapped alongside). Same real-scale mm
+        /// layout as the rooms SVG.
         /// </summary>
-        public static string ExportWallsSvg(IReadOnlyList<RoomOutline> rooms,
-            float gridYawDegrees, IReadOnlyList<WallLoss> losses, string stem)
+        public static string ExportWallsSvg(IReadOnlyList<RoomOutline> allRooms,
+            float gridYawDegrees, IReadOnlyList<WallLoss> allLosses, string stem,
+            float floorBaseY = float.NaN, string fileSuffix = "")
         {
+            IReadOnlyList<RoomOutline> rooms;
+            IReadOnlyList<WallLoss> losses;
+            if (!float.IsNaN(floorBaseY))
+            {
+                var useRooms = new List<RoomOutline>();
+                var indexMap = new Dictionary<int, int>();
+                for (int i = 0; i < allRooms.Count; i++)
+                    if (Mathf.Abs(allRooms[i].floorY - floorBaseY) <= 1f)
+                    {
+                        indexMap[i] = useRooms.Count;
+                        useRooms.Add(allRooms[i]);
+                    }
+                if (useRooms.Count == 0) return null;
+                var useLosses = new List<WallLoss>();
+                foreach (var loss in allLosses)
+                    if (indexMap.TryGetValue(loss.room, out int ni))
+                        useLosses.Add(new WallLoss
+                        {
+                            room = ni,
+                            edge = loss.edge,
+                            lossDb = loss.lossDb,
+                            samplesNear = loss.samplesNear,
+                            samplesFar = loss.samplesFar,
+                        });
+                rooms = useRooms;
+                losses = useLosses;
+            }
+            else
+            {
+                rooms = allRooms;
+                losses = allLosses;
+            }
+
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             var roomsMm = RoomsToGridMm(rooms, gridYawDegrees,
                 out Vector2 min, out Vector2 max);
@@ -577,7 +627,7 @@ namespace WifiScanner
             sb.AppendLine("</svg>");
 
             string path = Path.Combine(Application.persistentDataPath,
-                $"{stem}_walls.svg");
+                $"{stem}_walls{fileSuffix}.svg");
             File.WriteAllText(path, sb.ToString());
             Debug.Log($"[DataExporter] Wrote wall-attenuation floor plan to {path}");
             return path;
@@ -822,8 +872,21 @@ namespace WifiScanner
                         "fill=\"#333333\" text-anchor=\"middle\"{2}>{3:F2} m</text>",
                         mid.x, mid.y, textExtra, worldLen));
                 }
+
+                // Room name at the centroid.
+                if (!string.IsNullOrEmpty(room.name))
+                    sb.AppendLine(string.Format(inv,
+                        "  <text x=\"{0:F0}\" y=\"{1:F0}\" font-size=\"160\" " +
+                        "font-weight=\"bold\" fill=\"#1a4a6a\" " +
+                        "text-anchor=\"middle\"{2}>{3}</text>",
+                        centroid.x, centroid.y, textExtra, XmlEscape(room.name)));
             }
         }
+
+        private static string XmlEscape(string s) =>
+            string.IsNullOrEmpty(s)
+                ? ""
+                : s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
         private static void AppendWallLine(StringBuilder sb,
             System.Globalization.CultureInfo inv, Vector2 a, Vector2 b)

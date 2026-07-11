@@ -80,6 +80,7 @@ namespace WifiScanner
         private int _bssidIndex = -1; // -1 = alle APs (Parallel-Ansicht)
         private GameObject _floorListGo; // Etagen-Dropdown (aufklappbare Liste)
         private int _floorListVersion = -1;
+        private TextMeshProUGUI _roomNameLabel;
         private TextMeshProUGUI _wipeLabel;
         private float _wipeArmedUntil;
         private float _wipeInfoUntil;
@@ -356,6 +357,8 @@ namespace WifiScanner
 
         private void OnOpeningRemoveClicked() => roomTracer?.RemoveLastOpening();
 
+        private void OnRoomNameClicked() => roomTracer?.ToggleRoomNaming();
+
         private void OnFloorCreateClicked() => floorManager?.CreateFloorAtHead();
 
         private void OnFloorAboveClicked() => floorManager?.CreateFloorAbove();
@@ -550,6 +553,10 @@ namespace WifiScanner
                 _roomsClearLabel.text = Time.unscaledTime < _roomsClearArmedUntil
                     ? "<color=#FF6B6B>Sicher? Nochmal</color>"
                     : "Räume löschen";
+            if (_roomNameLabel != null && roomTracer != null)
+                _roomNameLabel.text = roomTracer.IsNamingRoom
+                    ? "Raum anvisieren,\nTrigger = Tastatur"
+                    : "Raum benennen";
             if (_occlusionLabel != null && occlusion != null)
                 _occlusionLabel.text = occlusion.OcclusionEnabled
                     ? "Occlusion: an" : "Occlusion: aus";
@@ -878,6 +885,8 @@ namespace WifiScanner
                 ("Räume löschen", OnRoomsClearClicked),
                 ("Öffnung entfernen", OnOpeningRemoveClicked));
             _roomsClearLabel = clearLabels[0];
+            _roomNameLabel = UiBuilder.AddButtonRow(page,
+                ("Raum benennen", OnRoomNameClicked))[0];
             UiBuilder.AddButtonRow(page,
                 ("Messungen löschen", OnMeasureClearClicked),
                 ("Notizen löschen", OnNotesClearClicked));

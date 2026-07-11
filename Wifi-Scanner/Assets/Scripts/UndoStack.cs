@@ -68,6 +68,7 @@ namespace WifiScanner
                 {
                     floorY = room.floorY,
                     height = room.height,
+                    name = room.name,
                     cornersXZ = new List<Vector2>(room.cornersXZ),
                 };
                 if (room.openings != null)

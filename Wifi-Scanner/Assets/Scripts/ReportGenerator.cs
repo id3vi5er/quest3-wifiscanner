@@ -65,23 +65,44 @@ namespace WifiScanner
                 sb.Append(Kpi($"{collector.roomTracer.Rooms.Count}", "Räume"));
             sb.AppendLine("</div>");
 
+            // ---- Automatic findings (assessment, not just tables) ----
+            AppendFindings(sb, collector);
+
             // ---- Heatmaps (per storey when available) ----
             AppendHeatmaps(sb, collector, stem, dir);
 
-            // ---- Combined floor plan SVG ----
+            // ---- Combined floor plan SVG (active storey) ----
             string combined = Path.Combine(dir, $"{stem}_combined.svg");
             if (File.Exists(combined))
             {
                 sb.AppendLine("<h2>Grundriss + Heatmap (kombiniert)</h2>");
                 AppendInlineSvg(sb, combined);
             }
-            else
+
+            // ---- Floor plans (one per storey) ----
+            var floorPlanFiles = new List<(string path, string caption)>();
+            if (collector.floorManager != null &&
+                collector.floorManager.Floors.Count > 1)
             {
-                string roomsSvg = Path.Combine(dir, $"{stem}_rooms.svg");
-                if (File.Exists(roomsSvg))
+                foreach (var level in collector.floorManager.Floors)
                 {
-                    sb.AppendLine("<h2>Grundriss</h2>");
-                    AppendInlineSvg(sb, roomsSvg);
+                    string p = Path.Combine(dir, $"{stem}_rooms_{level.label}.svg");
+                    if (File.Exists(p))
+                        floorPlanFiles.Add((p, $"Etage {level.label}"));
+                }
+            }
+            else if (!File.Exists(combined))
+            {
+                string p = Path.Combine(dir, $"{stem}_rooms.svg");
+                if (File.Exists(p)) floorPlanFiles.Add((p, "Grundriss"));
+            }
+            if (floorPlanFiles.Count > 0)
+            {
+                sb.AppendLine("<h2>Grundrisse</h2>");
+                foreach (var (svgPath, caption) in floorPlanFiles)
+                {
+                    sb.Append("<h3>").Append(Esc(caption)).AppendLine("</h3>");
+                    AppendInlineSvg(sb, svgPath);
                 }
             }
 
@@ -141,7 +162,7 @@ namespace WifiScanner
                 sb.AppendLine("<tr><th>Raum</th><th>Wand</th><th>Dämpfung</th>" +
                               "<th>Messpunkte (nah/fern)</th></tr>");
                 foreach (var w in walls.Losses)
-                    sb.Append("<tr><td>").Append(w.room + 1)
+                    sb.Append("<tr><td>").Append(RoomName(collector, w.room))
                       .Append("</td><td>").Append(w.edge + 1)
                       .Append("</td><td>").Append($"{w.lossDb:F1} dB")
                       .Append("</td><td>").Append(w.samplesNear).Append(" / ")
@@ -149,12 +170,30 @@ namespace WifiScanner
                 sb.AppendLine("</table>");
 
                 // Floor plan with the dB values ON the walls — much easier to
-                // map to reality than the table indices.
-                string wallsSvg = Path.Combine(dir, $"{stem}_walls.svg");
-                if (File.Exists(wallsSvg))
+                // map to reality than the table indices. One per storey when
+                // multi-storey files exist.
+                var wallPlans = new List<(string path, string caption)>();
+                if (collector.floorManager != null &&
+                    collector.floorManager.Floors.Count > 1)
                 {
-                    sb.AppendLine("<h3>Grundriss mit Wand-Dämpfungen</h3>");
-                    AppendInlineSvg(sb, wallsSvg);
+                    foreach (var level in collector.floorManager.Floors)
+                    {
+                        string p = Path.Combine(dir,
+                            $"{stem}_walls_{level.label}.svg");
+                        if (File.Exists(p))
+                            wallPlans.Add((p, $"Wand-Dämpfungen {level.label}"));
+                    }
+                }
+                else
+                {
+                    string p = Path.Combine(dir, $"{stem}_walls.svg");
+                    if (File.Exists(p))
+                        wallPlans.Add((p, "Grundriss mit Wand-Dämpfungen"));
+                }
+                foreach (var (svgPath, caption) in wallPlans)
+                {
+                    sb.Append("<h3>").Append(Esc(caption)).AppendLine("</h3>");
+                    AppendInlineSvg(sb, svgPath);
                 }
             }
 
@@ -235,6 +274,88 @@ namespace WifiScanner
             return path;
         }
 
+        // Renders the SurveyAnalyzer assessment as traffic-light bullets.
+        private static void AppendFindings(StringBuilder sb, SampleCollector collector)
+        {
+            var f = SurveyAnalyzer.Analyze(collector);
+            sb.AppendLine("<h2>Automatische Befunde</h2>");
+            if (!f.valid)
+            {
+                sb.Append("<p class=\"muted\">Keine Bewertung möglich (")
+                  .Append(Esc(f.invalidReason))
+                  .AppendLine(") — Räume zeichnen und messen, dann erneut exportieren.</p>");
+                return;
+            }
+
+            sb.AppendLine("<ul style=\"line-height:1.7\">");
+
+            // Coverage share vs. threshold.
+            string covColor = f.coveredShare >= 0.8f ? "#7CFC7C"
+                : f.coveredShare >= 0.5f ? "#FFB86B" : "#FF6B6B";
+            sb.Append("<li><b style=\"color:").Append(covColor).Append("\">")
+              .Append($"{f.coveredShare * 100f:F0} %")
+              .Append("</b> der Raumfläche (")
+              .Append($"{f.roomAreaSqm:F0} m²) erreichen mindestens ")
+              .Append(f.thresholdDbm).Append(" dBm — schwach: ")
+              .Append($"{f.weakShare * 100f:F0} %, nicht vermessen: ")
+              .Append($"{f.unmeasuredShare * 100f:F0} %.")
+              .AppendLine("</li>");
+
+            // Largest contiguous weak zone.
+            if (f.largestWeakAreaSqm > 0.5f)
+                sb.Append("<li>Größte zusammenhängende Schwachstelle: <b>")
+                  .Append($"{f.largestWeakAreaSqm:F1} m²</b> in ")
+                  .Append(Esc(f.largestWeakRoom))
+                  .Append($" (um x = {f.largestWeakCenterXZ.x:F1} / " +
+                          $"z = {f.largestWeakCenterXZ.y:F1} m).")
+                  .AppendLine("</li>");
+            else
+                sb.AppendLine("<li style=\"color:#7CFC7C\">Keine nennenswerte " +
+                              "zusammenhängende Schwachstelle gefunden.</li>");
+
+            // Measurement density per room.
+            if (f.lowDensityRooms.Count == 0)
+            {
+                sb.AppendLine("<li style=\"color:#7CFC7C\">Alle Räume sind " +
+                              "ausreichend dicht vermessen.</li>");
+            }
+            else
+            {
+                sb.Append("<li style=\"color:#FFB86B\">Unzureichende Messdichte in: ");
+                for (int i = 0; i < f.lowDensityRooms.Count; i++)
+                {
+                    var room = f.lowDensityRooms[i];
+                    if (i > 0) sb.Append(", ");
+                    sb.Append("<b>").Append(Esc(room.name)).Append("</b> (")
+                      .Append($"{room.measuredShare * 100f:F0} % vermessen, ")
+                      .Append($"{room.samplesPerSqm:F1} Punkte/m²)");
+                }
+                sb.AppendLine(" — dort noch einmal langsam ablaufen.</li>");
+            }
+
+            // AP overlap / roaming gaps.
+            if (f.apCount < 2)
+            {
+                sb.AppendLine("<li class=\"muted\">Nur ein Access Point gemessen — " +
+                              "Überlappungs-/Roaming-Analyse entfällt.</li>");
+            }
+            else
+            {
+                sb.Append("<li>").Append(f.apCount)
+                  .Append($" APs, {f.roamCount} Roaming-Ereignisse; ")
+                  .Append($"<b>{f.overlapShare * 100f:F0} %</b> der vermessenen " +
+                          "Fläche wird von mehreren APs erreicht.");
+                if (f.roamingGapAreaSqm > 1f)
+                    sb.Append(" <span style=\"color:#FFB86B\">Potenzielle " +
+                              $"Roaming-Lücke: {f.roamingGapAreaSqm:F1} m² " +
+                              "schwacher Bereich mit nur einem AP in Reichweite." +
+                              "</span>");
+                sb.AppendLine("</li>");
+            }
+
+            sb.AppendLine("</ul>");
+        }
+
         // Embeds every heatmap PNG of this scan (base64), per-storey when
         // multi-storey files exist, else the single main heatmap.
         private static void AppendHeatmaps(StringBuilder sb,
@@ -293,6 +414,16 @@ namespace WifiScanner
 
         private static string Kpi(string value, string label) =>
             $"<span class=\"kpi\"><b>{value}</b>{Esc(label)}</span>";
+
+        /// <summary>User-given room name, falling back to "Raum n".</summary>
+        private static string RoomName(SampleCollector collector, int index)
+        {
+            var rooms = collector.roomTracer != null ? collector.roomTracer.Rooms : null;
+            if (rooms != null && index >= 0 && index < rooms.Count &&
+                !string.IsNullOrEmpty(rooms[index].name))
+                return Esc(rooms[index].name);
+            return $"Raum {index + 1}";
+        }
 
         private static string Fmt(Vector3 v) =>
             string.Format(System.Globalization.CultureInfo.InvariantCulture,
