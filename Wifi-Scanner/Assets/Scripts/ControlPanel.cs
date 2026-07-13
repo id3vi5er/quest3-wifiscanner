@@ -45,6 +45,7 @@ namespace WifiScanner
         public RoamingTracker roaming;
         public MultiApScanner multiAp;
         public ThroughputTester throughputTester;
+        public DynamicRoomMeshController dynamicRoomMesh;
         public NetworkStreamer streamer;
         public int streamPort = 9999;
 
@@ -88,6 +89,8 @@ namespace WifiScanner
         private TextMeshProUGUI _multiApLabel;
         private TextMeshProUGUI _throughputLabel;
         private TextMeshProUGUI _throughputVisibilityLabel;
+        private TextMeshProUGUI _roomScanLabel;
+        private TextMeshProUGUI _roomMeshVisibilityLabel;
         private int _throughputPendingCount = -1;
         private float _throughputClaimUntil;
         private float _throughputRequestUntil;
@@ -474,6 +477,11 @@ namespace WifiScanner
                 ? "Occlusion: an" : "Occlusion: aus";
         }
 
+        private void OnRoomScanClicked() => dynamicRoomMesh?.ToggleScan();
+
+        private void OnRoomMeshVisibilityClicked() =>
+            dynamicRoomMesh?.ToggleMeshVisible();
+
         private void OnMinimapClicked()
         {
             if (minimap == null) return;
@@ -732,6 +740,12 @@ namespace WifiScanner
             if (_occlusionLabel != null && occlusion != null)
                 _occlusionLabel.text = occlusion.OcclusionEnabled
                     ? "Occlusion: an" : "Occlusion: aus";
+            if (_roomScanLabel != null && dynamicRoomMesh != null)
+                _roomScanLabel.text = dynamicRoomMesh.ScanEnabled
+                    ? "Raumscan: an" : "Raumscan: aus";
+            if (_roomMeshVisibilityLabel != null && dynamicRoomMesh != null)
+                _roomMeshVisibilityLabel.text = dynamicRoomMesh.MeshVisible
+                    ? "Raummesh: sichtbar" : "Raummesh: verborgen";
             if (_minimapLabel != null && minimap != null)
                 _minimapLabel.text = minimap.IsVisible ? "Minimap: an" : "Minimap: aus";
             if (_gridLabel != null && gridCalibrator != null)
@@ -1023,8 +1037,8 @@ namespace WifiScanner
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             var rootRt = (RectTransform)_root.transform;
-            rootRt.sizeDelta = new Vector2(480f, 920f); // tallest page: Ansicht
-            _root.transform.localScale = Vector3.one * 0.0008f; // 0.38 x 0.69 m
+            rootRt.sizeDelta = new Vector2(480f, 1000f); // tallest page: Ansicht
+            _root.transform.localScale = Vector3.one * 0.0008f; // 0.38 x 0.80 m
             _root.AddComponent<GraphicRaycaster>();            // editor mouse
             _root.AddComponent<TrackedDeviceGraphicRaycaster>(); // XR rays
 
@@ -1151,6 +1165,14 @@ namespace WifiScanner
                 ("Occlusion: aus", OnOcclusionClicked));
             _modeLabel = vizLabels[0];
             _occlusionLabel = vizLabels[1];
+            if (dynamicRoomMesh != null)
+            {
+                var roomMeshLabels = UiBuilder.AddButtonRow(page,
+                    ("Raumscan: aus", OnRoomScanClicked),
+                    ("Raummesh: sichtbar", OnRoomMeshVisibilityClicked));
+                _roomScanLabel = roomMeshLabels[0];
+                _roomMeshVisibilityLabel = roomMeshLabels[1];
+            }
             var mapLabels = UiBuilder.AddButtonRow(page,
                 ("Minimap: an", OnMinimapClicked),
                 ("Grundriss: an", OnFloorPlanClicked));

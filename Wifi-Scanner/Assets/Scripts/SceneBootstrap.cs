@@ -163,6 +163,17 @@ namespace WifiScanner
         [Tooltip("Start with dynamic occlusion already on.")]
         public bool occlusionOnAtStart = false;
 
+        [Header("Dynamic room mesh (environment depth)")]
+        [Tooltip("Offer the live Lasertag-style room scanner in the control panel. " +
+                 "The scanner itself remains off until explicitly enabled.")]
+        public bool enableDynamicRoomMesh = true;
+        [Tooltip("Start room reconstruction immediately. Off by default to avoid " +
+                 "sensor/GPU cost until the user enables it.")]
+        public bool roomScanOnAtStart = false;
+        [Tooltip("Initial visibility of an existing/generated room mesh. This does " +
+                 "not start or stop scanning.")]
+        public bool roomMeshVisibleAtStart = true;
+
         // NOTE: the OpenXR feature "Meta Quest: Meshing" stays ENABLED in the
         // project settings even though the scene-mesh room scan was removed —
         // it is what injects the USE_SCENE permission into the manifest, which
@@ -487,11 +498,25 @@ namespace WifiScanner
             }
 
             // --- Dynamic occlusion via real-time environment depth ---
-            DynamicOcclusionController occlusion = null;
-            if (enableDynamicOcclusion)
+            DynamicOcclusionController depthCoordinator = null;
+            if (enableDynamicOcclusion || enableDynamicRoomMesh)
             {
-                occlusion = gameObject.AddComponent<DynamicOcclusionController>();
-                occlusion.occlusionOnAtStart = occlusionOnAtStart;
+                depthCoordinator = gameObject.AddComponent<DynamicOcclusionController>();
+                depthCoordinator.occlusionOnAtStart =
+                    enableDynamicOcclusion && occlusionOnAtStart;
+            }
+            DynamicOcclusionController occlusion = enableDynamicOcclusion
+                ? depthCoordinator : null;
+
+            // --- Optional Lasertag-style TSDF room reconstruction ---
+            DynamicRoomMeshController roomMesh = null;
+            if (enableDynamicRoomMesh)
+            {
+                roomMesh = gameObject.AddComponent<DynamicRoomMeshController>();
+                roomMesh.scanOnAtStart = roomScanOnAtStart;
+                roomMesh.meshVisibleAtStart = roomMeshVisibleAtStart;
+                roomMesh.Configure(depthCoordinator);
+                _collector.dynamicRoomMesh = roomMesh;
             }
 
             // --- Hide controller models (rays/menus stay usable) ---
@@ -534,6 +559,7 @@ namespace WifiScanner
                 panel.floor = floor;
                 panel.modeController = vizMode;
                 panel.occlusion = occlusion;
+                panel.dynamicRoomMesh = roomMesh;
                 panel.streamer = streamer;
                 panel.streamPort = pcPort;
                 panel.minimap = minimap;

@@ -11,12 +11,17 @@ entstehen im **MR-Passthrough**:
 - ein **manuell gezeichneter, massstaeblicher Grundriss** inklusive Raumhoehen,
   Tueren/Fenstern und optionalen Bohr-, Mess-, Ping- und Notiz-Markern,
 - eine **Handgelenk-Minimap** und ein **Web-Dashboard** fuer Live-Ansicht,
+- optional ein **laufend aktualisiertes Raummesh aus Environment Depth**, ohne
+  vorheriges Space Setup,
 - einen **lokalen bidirektionalen Durchsatztest** direkt gegen den Dashboard-Browser,
   Downloads und Scan-Export im lokalen Netzwerk.
 
 Die App arbeitet ohne vorherigen Meta-Space-Setup-Raumscan. Virtuelle Punkte
 und Heatmap koennen trotzdem dynamisch hinter realen Objekten verschwinden:
 Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
+Dieselbe Depth-API kann im Tab `Ansicht` separat fuer den dynamischen Raumscan
+aktiviert werden. Scan und Mesh-Sichtbarkeit sind zwei unabhaengige Schalter;
+standardmaessig ist der rechenintensive Scan aus.
 
 > **Warum nativ und nicht WebXR?** Browser/WebXR haben keine API fuer
 > WiFi-RSSI in dBm. Diese Information ist nur ueber native Android-APIs
@@ -60,6 +65,10 @@ Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
   Wand ausrichten.
 - **Dynamische Occlusion**: Environment Depth blendet Punkte und Heatmap hinter
   realen Objekten aus, ohne Raumscan.
+- **Dynamisches Raummesh**: optionaler Environment-Depth-Scan mit sparse TSDF,
+  Surface Nets, Chunk-Aktualisierung und normalbasierter Lasertag-Farbdarstellung.
+  Ausschalten stoppt Sensoranforderung, Integration und Meshing vollstaendig;
+  Ausblenden stoppt den laufenden Scan nicht.
 - **Minimap** am rechten Handgelenk: Heatmap, Grundriss, Kopfposition,
   Blickrichtung, nordfest oder mit Blickrichtung rotierend.
 - **HUD** am linken Handgelenk: REC-Status, Punktzahl, RSSI, SSID, Ansicht,
@@ -93,6 +102,7 @@ Beim Export schreibt die App nach `Application.persistentDataPath`:
 - `<stem>_coverage.png` plus `<stem>_coverage.json` mit der simulierten Coverage-Prognose
 - `<stem>_roam.json` fuer aufgezeichnete Roaming-Ereignisse (BSSID-/Band-Wechsel)
 - `<stem>_rooms.obj` fuer extrudierte Raumwaende mit Tuer-/Fensterloechen
+- `<stem>_roommesh.obj` fuer das dynamisch erfasste, farblose Raummesh
 - `<stem>_combined.svg` als kombinierte Heatmap+Grundriss-Ansicht
 - optional `<stem>_drill.json`, `<stem>_apfix.json`, `<stem>_ping.json`,
   `<stem>_notes.json`, `<stem>_measure.json`
@@ -129,6 +139,8 @@ Wifi-Scanner/Assets/
     GridCalibrator.cs             Raster an Wand ausrichten
     MinimapController.cs          Handgelenk-Minimap
     DynamicOcclusionController.cs Environment-Depth-Occlusion
+    DynamicRoomMeshController.cs  Start/Stopp, Sichtbarkeit, Chunks und OBJ-Export
+    DynamicRoomMesh/              TSDF, Surface Nets und Mesh-Reduktion
     ControlPanel.cs               World-Space-Bedienpanel
     HudController.cs              Handgelenk-HUD
     RecordingControls.cs          A/B-Controller-Shortcuts
@@ -142,6 +154,7 @@ Wifi-Scanner/Assets/
     DistanceMeasurer.cs           Distanzmessungen
     DrillPlanner.cs               Bohrlinien auf Raumflaechen
     DeleteController.cs           Universeller Loeschmodus
+  Resources/DynamicRoomMesh/      Depth-/TSDF-Compute-Kernel und Normalfarben-Shader
     WebDashboardServer.cs         Eingebetteter HTTP/WebSocket-Server
     WebDashboardPage.cs           Self-contained Browser-Dashboard
     DataExporter.cs               CSV/JSON/PNG/SVG/OBJ-Export und Load-APIs
@@ -260,6 +273,8 @@ Das World-Space-Panel wird mit dem Controller-Strahl bedient.
 
 - Ansicht wechseln
 - dynamische Occlusion an/aus
+- Raumscan an/aus (stoppt bzw. startet Depth-Integration und Meshing)
+- Raummesh sichtbar/verborgen (der Scan laeuft unveraendert weiter)
 - Minimap an/aus
 - Grundriss in Minimap an/aus
 - Kartenrotation

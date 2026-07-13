@@ -37,6 +37,7 @@ namespace WifiScanner
         private AROcclusionManager _manager;
         private ARShaderOcclusion _shaderOcclusion;
         private Transform _trackingSpace;
+        private bool _roomScanDepthRequired;
 
         private static readonly int WorldToTrackingId =
             Shader.PropertyToID("_WifiWorldToTracking");
@@ -108,13 +109,33 @@ namespace WifiScanner
             OcclusionEnabled = enable;
             if (_manager == null || _shaderOcclusion == null) return;
 
-            _manager.requestedEnvironmentDepthMode =
-                enable ? depthMode : EnvironmentDepthMode.Disabled;
             _shaderOcclusion.enabled = enable;
+            ApplyDepthRequest();
             Debug.Log($"[DynOcclusion] Dynamische Occlusion -> {(enable ? "AN" : "AUS")}");
         }
 
-        private static void RequestScenePermission()
+        /// <summary>
+        /// Keeps the shared Quest environment-depth stream alive for the
+        /// dynamic room scanner without enabling visual occlusion. Occlusion
+        /// and room scanning can therefore be switched independently.
+        /// </summary>
+        public void SetRoomScanDepthRequired(bool required)
+        {
+            _roomScanDepthRequired = required;
+            RequestScenePermission();
+            ApplyDepthRequest();
+        }
+
+        private void ApplyDepthRequest()
+        {
+            if (_manager == null) return;
+            _manager.requestedEnvironmentDepthMode =
+                (OcclusionEnabled || _roomScanDepthRequired)
+                    ? depthMode
+                    : EnvironmentDepthMode.Disabled;
+        }
+
+        public static void RequestScenePermission()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
             // The depth API needs spatial-data permission, independent of

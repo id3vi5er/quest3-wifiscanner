@@ -1,0 +1,22 @@
+#include "DepthMath.hlsl"
+
+RWTexture2DArray<float4> drmDepthNormalTextureRW;
+
+#pragma kernel DepthNormals
+[numthreads(8, 8, 1)]
+void DepthNormals(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= drmDepthTextureSize) || id.z >= 2) return;
+    uint2 right = min(id.xy + uint2(1, 0), drmDepthTextureSize - 1);
+    uint2 up = min(id.xy + uint2(0, 1), drmDepthTextureSize - 1);
+    float2 uv = (float2)id.xy / drmDepthTextureSize;
+    float2 uvRight = (float2)right / drmDepthTextureSize;
+    float2 uvUp = (float2)up / drmDepthTextureSize;
+    float3 center = drmNdcToWorld(float3(uv,
+        drmDepthTexture[uint3(id.xy, id.z)]), id.z);
+    float3 horizontal = drmNdcToWorld(float3(uvRight,
+        drmDepthTexture[uint3(right, id.z)]), id.z) - center;
+    float3 vertical = drmNdcToWorld(float3(uvUp,
+        drmDepthTexture[uint3(up, id.z)]), id.z) - center;
+    drmDepthNormalTextureRW[id] = float4(-normalize(cross(horizontal, vertical)), 1);
+}

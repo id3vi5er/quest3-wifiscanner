@@ -56,6 +56,8 @@ namespace WifiScanner
         public RoamingTracker roaming;
         [Tooltip("Optional: multi-storey manager — tags each point with its floor.")]
         public FloorManager floorManager;
+        [Tooltip("Optional: exports and resets the dynamic environment-depth room mesh.")]
+        public DynamicRoomMeshController dynamicRoomMesh;
 
         [Header("Sampling")]
         [Tooltip("Minimum distance between points (m). A new point is only created " +
@@ -370,6 +372,7 @@ namespace WifiScanner
             apLocator?.ClearEstimates();
             wallLoss?.ResetForNewSession();
             coverage?.ResetForNewSession();
+            dynamicRoomMesh?.ClearMesh();
             UndoStack.Clear();
             DataExporter.DeleteExportStem(ResumePrompt.AutosaveStem);
 
@@ -467,6 +470,7 @@ namespace WifiScanner
                 : null;
             if (roomTracer != null)
                 roomTracer.Export(stem, drills); // SVG + JSON + extruded OBJ
+            dynamicRoomMesh?.ExportObj(stem); // separate geometry-only _roommesh.obj
             if (drills != null)
                 DataExporter.ExportDrillJson(drills,
                     floorHeatmap != null ? floorHeatmap.gridYawDegrees : 0f, stem);

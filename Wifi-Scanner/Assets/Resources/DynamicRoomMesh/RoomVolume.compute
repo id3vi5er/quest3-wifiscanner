@@ -1,0 +1,219 @@
+#include "DepthMath.hlsl"
+
+#define INDEX_MASK 0x8FFFFFFF
+#define VISIBILITY_BIT 0x10000000
+#define RESERVED_BIT 0x20000000
+#define INVALID_BIT 0x80000000
+
+float voxSize;
+float distanceTruncationBand;
+float chunkWorldSizeDim;
+uint voxPerChunkDim;
+uint groupsPerChunkDim;
+float minDist;
+float maxDist;
+float minDot;
+
+RWStructuredBuffer<int> reservedChunkCounter;
+RWStructuredBuffer<int> chunkTable;
+RWStructuredBuffer<uint> chunkChangeSums;
+uint3 chunkTableDims;
+uint chunkTableLength;
+RWTexture3D<float2> chunkData;
+uint3 chunkDataDims;
+uint maxNumChunks;
+AppendStructuredBuffer<int> visibleChunksAppend;
+RWStructuredBuffer<int> visibleChunks;
+int maxNumVisibleChunks;
+
+#define MAX_PLAYER_HEADS 64
+float4 playerHeads[MAX_PLAYER_HEADS];
+int numPlayerHeads;
+float playerMaskRadius;
+float playerMaskAbove;
+float playerMaskBelow;
+
+bool IsOnPlayer(float3 world)
+{
+    [loop] for (int i = 0; i < numPlayerHeads; i++)
+    {
+        float3 head = playerHeads[i].xyz;
+        float2 horizontal = world.xz - head.xz;
+        if (dot(horizontal, horizontal) < playerMaskRadius * playerMaskRadius &&
+            world.y < head.y + playerMaskAbove &&
+            world.y > head.y - playerMaskBelow) return true;
+    }
+    return false;
+}
+
+int3 WorldToChunkCoordinate(float3 world)
+{
+    int3 tableCenter = (int3)(chunkTableDims / 2);
+    return (int3)floor(world / chunkWorldSizeDim) + tableCenter;
+}
+
+int ChunkCoordinateToIndex(int3 coordinate)
+{
+    int3 tableDimensions = (int3)chunkTableDims;
+    if (any(coordinate < 0) || any(coordinate >= tableDimensions))
+        return (int)INVALID_BIT;
+    return coordinate.x + coordinate.y * tableDimensions.x +
+        coordinate.z * tableDimensions.x * tableDimensions.y;
+}
+
+int3 ChunkIndexToCoordinate(int index)
+{
+    int3 tableDimensions = (int3)chunkTableDims;
+    return int3(index % tableDimensions.x,
+        index / tableDimensions.x % tableDimensions.y,
+        index / (tableDimensions.x * tableDimensions.y));
+}
+
+float3 ChunkCoordinateToCorner(int3 coordinate)
+{
+    // Keep this subtraction signed. Direct int3/uint3 arithmetic promotes to
+    // uint on Vulkan, so coordinates below the table center underflow and are
+    // projected billions of metres away instead of into the negative half-space.
+    int3 tableCenter = (int3)(chunkTableDims / 2);
+    int3 uncenteredCoordinate = coordinate - tableCenter;
+    return (float3)uncenteredCoordinate * chunkWorldSizeDim - voxSize;
+}
+
+uint3 DataIndexToStart(int index)
+{
+    uint dataIndex = (uint)index;
+    uint3 coordinate;
+    coordinate.x = dataIndex % chunkDataDims.x;
+    coordinate.y = dataIndex / chunkDataDims.x % chunkDataDims.y;
+    coordinate.z = dataIndex / (chunkDataDims.x * chunkDataDims.y);
+    return coordinate * voxPerChunkDim;
+}
+
+uint SNormToByte(float value)
+{
+    return (uint)(round(clamp(value, -1.0, 1.0) * 127.0) + 128);
+}
+
+float ByteToSNorm(uint value)
+{
+    return max(((int)value - 128) / 127.0, -1.0);
+}
+
+uint PackFourSNorm(float4 values)
+{
+    int4 quantized = (int4)round(clamp(values, -1.0, 1.0) * 127.0);
+    uint4 bytes = (uint4)(quantized & 0xFF);
+    return bytes.x | bytes.y << 8 | bytes.z << 16 | bytes.w << 24;
+}
+
+#pragma kernel Clear
+[numthreads(4, 4, 4)]
+void Clear(uint3 id : SV_DispatchThreadID)
+{
+    chunkData[id] = float2(1.0, ByteToSNorm(0));
+}
+
+#pragma kernel Mark
+[numthreads(8, 8, 1)]
+void Mark(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= drmDepthTextureSize)) return;
+    float3 surface = drmDepthPixelToWorld(id.xy);
+    float distanceFromEye = distance(surface, drmDepthEyePosition());
+    if (!(distanceFromEye >= minDist && distanceFromEye <= maxDist) ||
+        IsOnPlayer(surface)) return;
+
+    int chunkIndex = ChunkCoordinateToIndex(WorldToChunkCoordinate(surface));
+    if (chunkIndex & INVALID_BIT) return;
+    int previous;
+    InterlockedOr(chunkTable[chunkIndex], VISIBILITY_BIT, previous);
+    if (previous & VISIBILITY_BIT) return;
+    visibleChunksAppend.Append(chunkIndex);
+
+    if ((previous & RESERVED_BIT) == 0)
+    {
+        int dataIndex;
+        InterlockedAdd(reservedChunkCounter[0], 1, dataIndex);
+        if (dataIndex >= (int)maxNumChunks) dataIndex |= INVALID_BIT;
+        chunkTable[chunkIndex] = dataIndex & INDEX_MASK |
+            RESERVED_BIT | VISIBILITY_BIT;
+    }
+}
+
+#pragma kernel Integrate
+[numthreads(8, 8, 8)]
+void Integrate(uint3 threadID : SV_GroupThreadID, uint3 groupID : SV_GroupID)
+{
+    if (groupID.x >= maxNumVisibleChunks) return;
+    int chunkIndex = visibleChunks[groupID.x];
+    if (groupID.y == 0 && all(threadID == 0))
+        InterlockedAnd(chunkTable[chunkIndex], ~VISIBILITY_BIT);
+
+    int dataIndex = chunkTable[chunkIndex] & INDEX_MASK;
+    if (dataIndex & INVALID_BIT) return;
+    uint3 groupOffset;
+    groupOffset.x = groupID.y % groupsPerChunkDim;
+    groupOffset.y = groupID.y / groupsPerChunkDim % groupsPerChunkDim;
+    groupOffset.z = groupID.y / (groupsPerChunkDim * groupsPerChunkDim);
+    groupOffset *= 8;
+    uint3 chunkOffset = groupOffset + threadID;
+    uint3 dataCoordinate = DataIndexToStart(dataIndex) + chunkOffset;
+    float3 chunkCorner = ChunkCoordinateToCorner(
+        ChunkIndexToCoordinate(chunkIndex));
+    float3 voxelCenter = chunkCorner + chunkOffset * voxSize + voxSize * 0.5;
+
+    float4 clip = drmWorldToClip(voxelCenter);
+    if (clip.w < 0) return;
+    float3 ndc = drmClipToNdc(clip);
+    if (any(ndc.xy < 0.1) || any(ndc.xy > 0.9)) return;
+    float sampledDepth = drmSampleDepth(ndc.xy);
+    float3 surfaceNormal = drmSampleNormal(ndc.xy);
+    float3 surface = drmNdcToWorld(float3(ndc.xy, sampledDepth));
+    float3 eye = drmDepthEyePosition();
+    float3 eyeToVoxel = voxelCenter - eye;
+    float voxelDistance = length(eyeToVoxel);
+    if (voxelDistance < minDist || voxelDistance > maxDist) return;
+    float normalDot = -dot(eyeToVoxel, surfaceNormal) / voxelDistance;
+    if (normalDot < minDot) return;
+
+    float signedDistance = (length(surface - eye) - voxelDistance) *
+        saturate(normalDot);
+    float normalizedDistance = min(signedDistance / distanceTruncationBand, 1.0);
+    if (normalizedDistance < -1.0 || IsOnPlayer(surface)) return;
+
+    float2 previous = chunkData[dataCoordinate];
+    uint count = SNormToByte(previous.g);
+    float weight = 1.0 / (count + 1);
+    float newDistance = normalizedDistance * weight + previous.r * (1.0 - weight);
+    uint newCount = min(count + 1, 16);
+    chunkData[dataCoordinate] = float2(newDistance, ByteToSNorm(newCount));
+    uint change = abs(round(newDistance * 127) - round(previous.r * 127));
+    InterlockedAdd(chunkChangeSums[chunkIndex], change);
+}
+
+RWStructuredBuffer<uint> visibleChangeSumsReadback;
+#pragma kernel VisibleChunkChangeSumsReadback
+[numthreads(64, 1, 1)]
+void VisibleChunkChangeSumsReadback(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)maxNumVisibleChunks) return;
+    visibleChangeSumsReadback[id.x] = chunkChangeSums[visibleChunks[id.x]];
+}
+
+RWStructuredBuffer<int> readbackBuffer;
+int readbackChunkIndex;
+#pragma kernel ChunkDataReadback
+[numthreads(8, 8, 8)]
+void ChunkDataReadback(uint3 id : SV_DispatchThreadID)
+{
+    int tableValue = chunkTable[readbackChunkIndex];
+    if ((tableValue & RESERVED_BIT) == 0) return;
+    uint3 start = DataIndexToStart(tableValue & INDEX_MASK);
+    uint3 offset = uint3(id.x * 4, id.y, id.z);
+    float4 values;
+    [unroll] for (int i = 0; i < 4; i++)
+        values[i] = chunkData[start + offset + uint3(i, 0, 0)].x;
+    uint xThreads = voxPerChunkDim / 4;
+    uint index = id.x + id.y * xThreads + id.z * xThreads * voxPerChunkDim;
+    readbackBuffer[index] = PackFourSNorm(values);
+}
