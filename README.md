@@ -24,6 +24,24 @@ Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
 
 ---
 
+## Eindruecke aus der Quest
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/Quest-MR-Heatmap-Pointcloud.jpeg" alt="MR-Heatmap und WiFi-Punktwolke in der Quest"><br><sub>Heatmap und RSSI-Punktwolke direkt im realen Raum</sub></td>
+    <td width="50%"><img src="assets/Quest-MR-Control-Panel.jpeg" alt="Bedienpanel und Handgelenk-Minimap in der Quest"><br><sub>World-Space-Bedienpanel und Handgelenk-Minimap</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/Quest-MR-Throughput.jpeg" alt="Raeumliche Durchsatzmesspunkte in der Quest"><br><sub>Bidirektionale Durchsatzmesspunkte im Gebaeude</sub></td>
+    <td width="50%"><img src="assets/Quest-MR-AP-Estimate.jpeg" alt="AP-Standortschaetzung in der Quest"><br><sub>Geschaetzter AP-Standort mit Distanz und Signalstaerke</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="assets/Quest-MR-Window-Heatmap.jpeg" alt="Erfasste Raumgeometrie, Fenster und Heatmap in der Quest"><br><sub>Raumgeometrie, Fenster und WiFi-Heatmap im Passthrough</sub></td>
+  </tr>
+</table>
+
+---
+
 ## Aktueller Funktionsumfang
 
 - **Live-WiFi-Messung** des verbundenen APs: RSSI, Link-Speed, Frequenz, SSID,
