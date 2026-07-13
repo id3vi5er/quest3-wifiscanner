@@ -51,6 +51,9 @@ namespace WifiScanner
         private TcpListener _listener;
         private Thread _acceptThread;
         private volatile bool _running;
+        // Unity API properties must be read on the main thread. HTTP requests
+        // run on worker threads, so capture this once before starting them.
+        private string _exportDirectory;
 
         private class Client
         {
@@ -114,6 +117,8 @@ namespace WifiScanner
             if (_running) return;
             try
             {
+                _exportDirectory = Application.persistentDataPath;
+                Directory.CreateDirectory(_exportDirectory);
                 _listener = new TcpListener(IPAddress.Any, port);
                 _listener.Start();
                 _running = true;
@@ -527,7 +532,7 @@ namespace WifiScanner
 
         // ---- Scan downloads ----
 
-        private static string ScanListJson()
+        private string ScanListJson()
         {
             var sb = new StringBuilder("{\"files\":[");
             bool first = true;
@@ -555,7 +560,7 @@ namespace WifiScanner
                 name.Contains("\\") || name.Contains(".."))
             { WriteHttp(stream, "400 Bad Request", "text/plain", Bytes("bad name")); return; }
 
-            string full = Path.Combine(Application.persistentDataPath, name);
+            string full = Path.Combine(_exportDirectory, name);
             if (!File.Exists(full) || !IsExport(name))
             { WriteHttp(stream, "404 Not Found", "text/plain", Bytes("no file")); return; }
 
@@ -594,11 +599,10 @@ namespace WifiScanner
                 Bytes("{\"ok\":true}"));
         }
 
-        private static IEnumerable<string> ExportFiles()
+        private IEnumerable<string> ExportFiles()
         {
-            string dir = Application.persistentDataPath;
             foreach (var pattern in ExportPatterns)
-                foreach (var f in Directory.GetFiles(dir, pattern))
+                foreach (var f in Directory.GetFiles(_exportDirectory, pattern))
                     yield return f;
         }
 
