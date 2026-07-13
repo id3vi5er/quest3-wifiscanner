@@ -151,6 +151,17 @@ namespace WifiScanner
             modeController?.ReapplyVisibility();
         }
 
+        public void ResetForNewSession()
+        {
+            StopAllCoroutines();
+            _rebuilding = false;
+            _hasField = false;
+            _changeHash = 0;
+            _timer = updateInterval;
+            StatusHint = "Prognose: erst Räume zeichnen";
+            if (_quadGo != null) _quadGo.SetActive(false);
+        }
+
         /// <summary>Prediction quad opacity (material tint), same behaviour as
         /// the measured heatmap — driven by the left stick / panel slider for
         /// whichever heatmap is currently active.</summary>

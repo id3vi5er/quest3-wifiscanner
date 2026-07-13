@@ -178,6 +178,14 @@ namespace WifiScanner
             }
         }
 
+        public void ResetForNewSession()
+        {
+            _losses.Clear();
+            _lossByWall.Clear();
+            _lastRevision = collector != null ? collector.DataRevision : -1;
+            HideLabels();
+        }
+
         // One floating label per estimated wall, at the wall's midpoint.
         private void RefreshLabels()
         {

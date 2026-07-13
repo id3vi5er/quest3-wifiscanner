@@ -9,8 +9,8 @@ namespace WifiScanner
     /// download drawer (files expand on demand), a bottom timeline (RSSI
     /// history, roaming ticks, connection outages) and a click-to-inspect
     /// tool (point / AP / note / ping / roaming details). A saved scan can be
-    /// loaded as a BEFORE dataset for a split comparison view with a draggable
-    /// divider and a shared transform. On phones the map goes fullscreen and
+    /// loaded as a BEFORE dataset for a split comparison view with automatic/
+    /// manual rigid alignment and a draggable divider. On phones the map goes fullscreen and
     /// the panels become bottom sheets.
     ///
     /// Written with single quotes throughout so it needs no escaping inside
@@ -55,8 +55,15 @@ namespace WifiScanner
   .panel label { display:block; font-size:13px; margin:3px 0; cursor:pointer; }
   .panel select, .panel button { width:100%; padding:6px; margin:3px 0; background:#232833;
       color:#e6e6e6; border:1px solid #333b48; border-radius:6px; font-size:13px; cursor:pointer; }
+  .alignrow { display:grid; grid-template-columns:42px 1fr 58px; gap:5px;
+              align-items:center; margin:4px 0; font-size:12px; color:#aeb6c4; }
+  .alignrow input[type=range] { width:100%; min-width:0; accent-color:#4a90c8; }
+  .alignrow output { text-align:right; font-variant-numeric:tabular-nums; }
+  #alignStatus { font-size:11px; line-height:1.35; color:#8fd4ff; margin:5px 0; }
+  #btnPivot.active { background:#6d5122; border-color:#e0a03c; }
   #files a { display:block; font-size:12px; color:#6cc0ff; text-decoration:none;
              padding:2px 0; word-break:break-all; }
+  #speedStatus { font-size:11px; line-height:1.4; color:#8fd4ff; margin:4px 0; }
   .sz { color:#6b7280; }
 
   #popup { position:absolute; display:none; background:#1a2029f2; border:1px solid #4a90c8;
@@ -120,6 +127,7 @@ namespace WifiScanner
     <label><input type='checkbox' id='l_pose' checked> Position</label>
     <label><input type='checkbox' id='l_ap' checked> AP-Standorte</label>
     <label><input type='checkbox' id='l_ping' checked> Pings</label>
+    <label><input type='checkbox' id='l_throughput' checked> Durchsatz</label>
     <label><input type='checkbox' id='l_notes' checked> Notizen</label>
     <label><input type='checkbox' id='l_roam' checked> Roaming</label>
     <h2>Statistik</h2>
@@ -129,8 +137,19 @@ namespace WifiScanner
   <div class='panel' id='drawer'>
     <h2>Vergleichs-Scan (vorher)</h2>
     <select id='cmpScan'><option value=''>&ndash; Scan w&auml;hlen &ndash;</option></select>
+    <div id='alignControls' style='display:none'>
+      <div id='alignStatus'>Noch nicht ausgerichtet</div>
+      <div class='alignrow'><span>X</span><input id='alignX' type='range' min='-20' max='20' step='0.05' value='0'><output id='alignXOut'>0,00 m</output></div>
+      <div class='alignrow'><span>Z</span><input id='alignZ' type='range' min='-20' max='20' step='0.05' value='0'><output id='alignZOut'>0,00 m</output></div>
+      <div class='alignrow'><span>Winkel</span><input id='alignYaw' type='range' min='-180' max='180' step='0.1' value='0'><output id='alignYawOut'>0,0&deg;</output></div>
+      <button id='btnAutoAlign'>Automatisch ausrichten</button>
+      <button id='btnPivot'>Drehpunkt im Plan setzen</button>
+      <button id='btnResetAlign'>Ausrichtung zur&uuml;cksetzen</button>
+    </div>
     <h2>Aktionen</h2>
     <button id='btnExport'>Aktuellen Scan exportieren</button>
+    <button id='btnSpeed'>Durchsatz hier messen</button>
+    <div id='speedStatus'>Browser dient als lokale Gegenstelle.</div>
     <button id='btnReport'>Report &ouml;ffnen</button>
     <button id='btnZip'>Alle als ZIP laden</button>
     <h2><button id='btnFileList' style='width:100%'>Dateien anzeigen &#9656;</button></h2>
@@ -143,16 +162,19 @@ namespace WifiScanner
 <script>
 // ---------- state ----------
 const S = { points:[], pose:null, rooms:[], apfix:null, apfixAll:null, pings:[],
-            notes:[], drills:[], trail:[], roams:[] };
-const S2 = { points:[], rooms:[], loaded:false, stem:'' }; // Vergleich (vorher)
+            notes:[], drills:[], trail:[], roams:[], throughput:[] };
+const S2 = { points:[], rooms:[], loaded:false, stem:'', gridYaw:0,
+  hasGridYaw:false, alignX:0, alignZ:0, alignYaw:0, pivotX:0, pivotZ:0,
+  error:null, alignmentSource:'', needsAuto:false }; // Vergleich (vorher)
 const L = { points:true, trail:true, rooms:true, pose:true, ap:true, ping:true,
-            notes:true, roam:true };
+            throughput:true, notes:true, roam:true };
 let mode = 'points';
 let floorSel = 'all';
 let apSel = 'all';
 let gridYaw = 0;
 let rssiWeak = -90, rssiStrong = -40;   // editierbare Legende
 let compareOn = false, divFrac = 0.5, divDrag = false;
+let pivotPick = false;
 let selected = null; // {kind, ...}
 const floorsSeen = new Set();
 const apsSeen = new Map();
@@ -202,12 +224,14 @@ document.getElementById('btnCompare').addEventListener('click', e => {
 document.getElementById('btnExport').addEventListener('click', () => {
   fetch('/export').then(() => setTimeout(loadFiles, 2000));
 });
+document.getElementById('btnSpeed').addEventListener('click', () => runSpeedTest());
 document.getElementById('btnZip').addEventListener('click', () => { location.href = '/download-all'; });
 document.getElementById('btnReport').addEventListener('click', () => {
   // Neuesten Report aus der Dateiliste &ouml;ffnen.
   fetch('/scans').then(r => r.json()).then(d => {
-    const reps = (d.files || []).filter(f => f.name.endsWith('_report.html'))
-      .sort((a, b) => b.name.localeCompare(a.name));
+    const reps = (d.files || []).filter(f =>
+      f.name.endsWith('_report.html') && f.name !== 'wifi_autosave_report.html')
+      .sort((a, b) => (b.modified || 0) - (a.modified || 0));
     if (reps.length) window.open('/download?f=' + encodeURIComponent(reps[0].name), '_blank');
     else alert('Noch kein Report - erst exportieren.');
   }).catch(() => {});
@@ -221,6 +245,30 @@ document.getElementById('btnFileList').addEventListener('click', () => {
   if (show) loadFiles();
 });
 document.getElementById('cmpScan').addEventListener('change', e => loadCompare(e.target.value));
+['alignX', 'alignZ', 'alignYaw'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    S2.alignX = parseFloat(document.getElementById('alignX').value) || 0;
+    S2.alignZ = parseFloat(document.getElementById('alignZ').value) || 0;
+    S2.alignYaw = (parseFloat(document.getElementById('alignYaw').value) || 0) * Math.PI / 180;
+    S2.needsAuto = false;
+    S2.alignmentSource = 'manuell';
+    updateAlignmentError();
+    updateAlignUi();
+    saveAlignment();
+    draw();
+  });
+});
+document.getElementById('btnAutoAlign').addEventListener('click', () => {
+  autoAlignReference(); if (!S2.needsAuto) saveAlignment(); draw();
+});
+document.getElementById('btnResetAlign').addEventListener('click', () => {
+  resetReferenceAlignment(); saveAlignment(); draw();
+});
+document.getElementById('btnPivot').addEventListener('click', e => {
+  pivotPick = !pivotPick;
+  e.target.classList.toggle('active', pivotPick);
+  e.target.textContent = pivotPick ? 'Punkt im linken Plan anklicken …' : 'Drehpunkt im Plan setzen';
+});
 
 function updateCompareUi() {
   dividerEl.style.display = compareOn ? 'block' : 'none';
@@ -241,22 +289,329 @@ window.addEventListener('pointerup', () => { divDrag = false; });
 
 // Vergleichs-Scan (Sample-JSON) vom Ger&auml;t laden.
 function loadCompare(name) {
-  if (!name) { S2.loaded = false; compareOn = false; updateCompareUi(); draw(); return; }
+  if (!name) {
+    S2.loaded = false; compareOn = false; pivotPick = false;
+    document.getElementById('alignControls').style.display = 'none';
+    updateCompareUi(); draw(); return;
+  }
   fetch('/download?f=' + encodeURIComponent(name)).then(r => r.json()).then(d => {
     S2.points = (d.samples || []).map(s => ({ x: s.posX, y: s.posY || 0, z: s.posZ,
       r: s.rssiDbm, f: s.floor || 0, b: s.bssid || '' }));
     S2.stem = name.replace('.json', '');
+    S2.gridYaw = (d.gridYawDegrees || 0) * Math.PI / 180;
+    S2.hasGridYaw = d.gridYawDegrees !== undefined;
+    S2.alignX = S2.alignZ = S2.alignYaw = 0;
+    S2.error = null; S2.alignmentSource = ''; S2.needsAuto = false;
     // Passenden Grundriss dazuladen (falls vorhanden).
     fetch('/download?f=' + encodeURIComponent(S2.stem + '_rooms.json'))
       .then(r => r.ok ? r.json() : null).then(rd => {
         S2.rooms = rd && rd.rooms ? rd.rooms : [];
-        S2.loaded = true;
-        compareOn = true;
-        document.getElementById('btnCompare').classList.add('active');
-        updateCompareUi();
-        draw();
-      }).catch(() => { S2.rooms = []; S2.loaded = true; compareOn = true; updateCompareUi(); draw(); });
+        if (rd && rd.gridYawDegrees !== undefined) {
+          S2.gridYaw = rd.gridYawDegrees * Math.PI / 180;
+          S2.hasGridYaw = true;
+        }
+        finishCompareLoad();
+      }).catch(() => { S2.rooms = []; finishCompareLoad(); });
   }).catch(() => alert('Scan konnte nicht geladen werden.'));
+}
+
+function finishCompareLoad() {
+  S2.loaded = true;
+  compareOn = true;
+  setReferencePivot();
+  const restored = loadAlignment();
+  if (!restored) {
+    autoAlignReference();
+    if (!S2.needsAuto) saveAlignment();
+  }
+  document.getElementById('alignControls').style.display = 'block';
+  document.getElementById('btnCompare').classList.add('active');
+  updateAlignUi();
+  updateCompareUi();
+  draw();
+}
+
+// ---------- local browser-assisted throughput ----------
+let speedRunning = false;
+let speedGeneration = 0;
+function setSpeedStatus(generation, text) {
+  if (generation === speedGeneration)
+    document.getElementById('speedStatus').textContent = text;
+}
+async function speedPing() {
+  const values = [];
+  for (let i = 0; i < 4; i++) {
+    const t = performance.now();
+    const r = await fetch('/speed/ping?n=' + Date.now() + '-' + i,
+      { cache:'no-store' });
+    if (!r.ok) throw new Error('Ping fehlgeschlagen');
+    await r.arrayBuffer();
+    if (i > 0) values.push(performance.now() - t); // first request warms TCP
+  }
+  return values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
+}
+async function speedDown(id, bytes, parallel) {
+  const t = performance.now();
+  const data = await Promise.all(Array.from({length:parallel}, (_, i) =>
+    fetch('/speed/down?id=' + encodeURIComponent(id) + '&bytes=' + bytes +
+      '&n=' + Date.now() + '-' + i, {cache:'no-store'}).then(async r => {
+        if (!r.ok) throw new Error('Quest→Browser fehlgeschlagen');
+        return (await r.arrayBuffer()).byteLength;
+      })));
+  const ms = performance.now() - t;
+  return { ms, mbps:data.reduce((a, b) => a + b, 0) * 8 / ms / 1000 };
+}
+async function speedUp(id, bytes, parallel) {
+  const payload = new Uint8Array(bytes);
+  const t = performance.now();
+  await Promise.all(Array.from({length:parallel}, (_, i) =>
+    fetch('/speed/up?id=' + encodeURIComponent(id) + '&n=' + i, {
+      method:'POST', cache:'no-store', headers:{'Content-Type':'application/octet-stream'},
+      body:payload
+    }).then(r => { if (!r.ok) throw new Error('Browser→Quest fehlgeschlagen'); return r.json(); })));
+  const ms = performance.now() - t;
+  return { ms, mbps:bytes * parallel * 8 / ms / 1000 };
+}
+async function runSpeedTest(requestId) {
+  if (speedRunning) return;
+  speedRunning = true;
+  const generation = ++speedGeneration;
+  const btn = document.getElementById('btnSpeed');
+  btn.disabled = true;
+  try {
+    setSpeedStatus(generation, 'Test wird vorbereitet …');
+    const startUrl = '/speed/start' + (requestId
+      ? '?request=' + encodeURIComponent(requestId) : '');
+    const start = await fetch(startUrl, {method:'POST', cache:'no-store'});
+    if (start.status === 409) {
+      setSpeedStatus(generation, 'Test läuft in einem anderen Dashboard.');
+      return;
+    }
+    if (!start.ok) throw new Error('Test konnte nicht gestartet werden');
+    const id = (await start.json()).id;
+    const latency = await speedPing();
+    // Warm-up removes connection setup/JIT effects from the measured rounds.
+    await speedDown(id, 256 * 1024, 2);
+    await speedUp(id, 256 * 1024, 2);
+    setSpeedStatus(generation, 'Quest → Browser wird gemessen …');
+    let down = await speedDown(id, 4 * 1024 * 1024, 4);
+    if (down.ms < 900) down = await speedDown(id, 8 * 1024 * 1024, 4);
+    if (down.ms < 900) down = await speedDown(id, 16 * 1024 * 1024, 4);
+    setSpeedStatus(generation, 'Browser → Quest wird gemessen …');
+    let up = await speedUp(id, 4 * 1024 * 1024, 4);
+    if (up.ms < 900) up = await speedUp(id, 8 * 1024 * 1024, 4);
+    if (up.ms < 900) up = await speedUp(id, 16 * 1024 * 1024, 4);
+    const result = { id, questToBrowserMbps:down.mbps,
+      browserToQuestMbps:up.mbps, latencyMs:latency };
+    const saved = await fetch('/speed/result', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(result)});
+    if (!saved.ok) throw new Error('Ergebnis konnte nicht gespeichert werden');
+    setSpeedStatus(generation, 'Quest → Browser: ' + down.mbps.toFixed(1) +
+      ' Mbit/s · Browser → Quest: ' + up.mbps.toFixed(1) +
+      ' Mbit/s · ' + latency.toFixed(0) + ' ms');
+  } catch (e) {
+    setSpeedStatus(generation, 'Durchsatztest fehlgeschlagen: ' + e.message);
+  } finally {
+    if (generation === speedGeneration) {
+      speedRunning = false; btn.disabled = false;
+    }
+  }
+}
+
+// ---------- comparison alignment ----------
+function gridWithYaw(x, z, yaw) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return [x * c - z * s, x * s + z * c];
+}
+function rotate2(x, z, yaw) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return [x * c - z * s, x * s + z * c];
+}
+function referenceBase(x, z) { return gridWithYaw(x, z, S2.gridYaw); }
+function referenceGridFromBase(q) {
+  const r = rotate2(q[0] - S2.pivotX, q[1] - S2.pivotZ, S2.alignYaw);
+  return [r[0] + S2.pivotX + S2.alignX, r[1] + S2.pivotZ + S2.alignZ];
+}
+function referenceGrid(x, z) { return referenceGridFromBase(referenceBase(x, z)); }
+function PRef(x, z) { const q = referenceGrid(x, z); return [sx(q[0]), sy(q[1])]; }
+
+function roomAlignmentPoints(rooms, project) {
+  const out = [];
+  (rooms || []).forEach(room => {
+    const c = room.cornersXZ || [];
+    for (let i = 0; i < c.length; i++) {
+      const a = c[i], b = c[(i + 1) % c.length];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const n = Math.max(1, Math.ceil(len / 0.35));
+      for (let k = 0; k < n; k++) {
+        const f = k / n;
+        out.push(project(a.x + (b.x - a.x) * f,
+                         a.y + (b.y - a.y) * f));
+      }
+    }
+  });
+  return downsample(out, 260);
+}
+function pointAlignmentPoints(points, project) {
+  // One representative per 40-cm cell prevents multi-AP batches at the same
+  // headset position from pulling the alignment centre towards that spot.
+  const cells = new Map(), out = [];
+  (points || []).forEach(p => {
+    const q = project(p.x, p.z);
+    const k = Math.round(q[0] / 0.4) + ',' + Math.round(q[1] / 0.4);
+    if (!cells.has(k)) { cells.set(k, true); out.push(q); }
+  });
+  return downsample(out, 260);
+}
+function downsample(a, max) {
+  if (a.length <= max) return a;
+  const out = [], step = a.length / max;
+  for (let i = 0; i < max; i++) out.push(a[Math.floor(i * step)]);
+  return out;
+}
+function centreOf(a) {
+  if (!a.length) return [0, 0];
+  let x = 0, z = 0;
+  a.forEach(p => { x += p[0]; z += p[1]; });
+  return [x / a.length, z / a.length];
+}
+function alignmentSets() {
+  const haveRooms = S.rooms.length && S2.rooms.length;
+  const liveProject = (x, z) => gridWithYaw(x, z, gridYaw);
+  return {
+    rooms: !!haveRooms,
+    live: haveRooms ? roomAlignmentPoints(S.rooms, liveProject)
+                    : pointAlignmentPoints(S.points, liveProject),
+    ref: haveRooms ? roomAlignmentPoints(S2.rooms, referenceBase)
+                   : pointAlignmentPoints(S2.points, referenceBase)
+  };
+}
+function nearestError(ref, live, yaw, pivot, tx, tz) {
+  if (!ref.length || !live.length) return Infinity;
+  let sum = 0;
+  for (const p of ref) {
+    const r = rotate2(p[0] - pivot[0], p[1] - pivot[1], yaw);
+    const x = r[0] + pivot[0] + tx, z = r[1] + pivot[1] + tz;
+    let best = 4; // cap outliers at 2 m squared
+    for (const q of live) {
+      const dx = x - q[0], dz = z - q[1], d = dx * dx + dz * dz;
+      if (d < best) best = d;
+    }
+    sum += Math.sqrt(best);
+  }
+  return sum / ref.length;
+}
+function setReferencePivot() {
+  const base = S2.rooms.length
+    ? roomAlignmentPoints(S2.rooms, referenceBase)
+    : pointAlignmentPoints(S2.points, referenceBase);
+  const c = centreOf(base);
+  S2.pivotX = c[0]; S2.pivotZ = c[1];
+}
+function autoAlignReference() {
+  if (!S2.loaded) return;
+  const sets = alignmentSets();
+  if (!sets.live.length || !sets.ref.length) {
+    S2.needsAuto = true;
+    S2.alignmentSource = 'wartet auf Live-Daten';
+    updateAlignUi();
+    return;
+  }
+  S2.needsAuto = !sets.rooms && sets.live.length < 20;
+  const lc = centreOf(sets.live), rc = centreOf(sets.ref);
+  S2.pivotX = rc[0]; S2.pivotZ = rc[1];
+
+  // Each scan's grid yaw provides the preferred Quest orientation. Zero can,
+  // however, mean either 'already straight' or 'never calibrated', so room
+  // geometry still searches the full circle and uses zero only as a tie-break.
+  const minDeg = -180, maxDeg = 175, coarse = 5;
+  let best = { score:Infinity, yaw:0, tx:lc[0] - rc[0], tz:lc[1] - rc[1] };
+  const tryAngle = deg => {
+    const yaw = deg * Math.PI / 180;
+    const r = rotate2(rc[0] - S2.pivotX, rc[1] - S2.pivotZ, yaw);
+    const tx = lc[0] - (r[0] + S2.pivotX);
+    const tz = lc[1] - (r[1] + S2.pivotZ);
+    let score = nearestError(sets.ref, sets.live, yaw,
+      [S2.pivotX, S2.pivotZ], tx, tz);
+    score += Math.abs(deg) * 0.001; // prefer Quest calibration on near-ties
+    if (score < best.score) best = { score, yaw, tx, tz };
+  };
+  if (sets.rooms) {
+    for (let d = minDeg; d <= maxDeg; d += coarse) tryAngle(d);
+    const centreDeg = best.yaw * 180 / Math.PI;
+    for (let d = centreDeg - coarse; d <= centreDeg + coarse; d += 0.1) tryAngle(d);
+  }
+  S2.alignYaw = best.yaw;
+  S2.alignX = best.tx;
+  S2.alignZ = best.tz;
+  S2.alignmentSource = sets.rooms ? 'automatisch · Raumkanten' : 'automatisch · Messfläche';
+  updateAlignmentError();
+  updateAlignUi();
+}
+function updateAlignmentError() {
+  if (!S2.loaded) return;
+  const liveProject = (x, z) => gridWithYaw(x, z, gridYaw);
+  const live = roomAlignmentPoints(S.rooms, liveProject);
+  const ref = roomAlignmentPoints(S2.rooms, referenceBase);
+  S2.error = live.length && ref.length ? nearestError(ref, live, S2.alignYaw,
+    [S2.pivotX, S2.pivotZ], S2.alignX, S2.alignZ) : null;
+}
+function resetReferenceAlignment() {
+  S2.alignX = S2.alignZ = S2.alignYaw = 0;
+  S2.needsAuto = false;
+  setReferencePivot();
+  S2.error = null;
+  S2.alignmentSource = 'Quest-Raster, ohne Feinabgleich';
+  updateAlignUi();
+}
+function alignmentKey() { return 'wifi-align:' + S2.stem; }
+function liveAlignmentSignature() {
+  if (!S.points.length) return null;
+  const q = gr(S.points[0].x, S.points[0].z);
+  return [q[0], q[1], gridYaw];
+}
+function saveAlignment() {
+  if (!S2.loaded) return;
+  try { localStorage.setItem(alignmentKey(), JSON.stringify({
+    x:S2.alignX, z:S2.alignZ, yaw:S2.alignYaw,
+    px:S2.pivotX, pz:S2.pivotZ, source:S2.alignmentSource,
+    live:liveAlignmentSignature()
+  })); } catch (e) {}
+}
+function loadAlignment() {
+  try {
+    const raw = localStorage.getItem(alignmentKey());
+    if (!raw) return false;
+    const a = JSON.parse(raw);
+    if (![a.x, a.z, a.yaw, a.px, a.pz].every(Number.isFinite)) return false;
+    const live = liveAlignmentSignature();
+    if (!live || !a.live || Math.hypot(live[0] - a.live[0], live[1] - a.live[1]) > 0.75 ||
+        Math.abs(live[2] - a.live[2]) > 0.035) return false;
+    S2.alignX = a.x; S2.alignZ = a.z; S2.alignYaw = a.yaw;
+    S2.pivotX = a.px; S2.pivotZ = a.pz;
+    S2.alignmentSource = a.source || 'gespeichert';
+    updateAlignmentError();
+    return true;
+  } catch (e) { return false; }
+}
+function setRange(id, value) {
+  const el = document.getElementById(id);
+  if (value < parseFloat(el.min)) el.min = Math.floor(value - 1);
+  if (value > parseFloat(el.max)) el.max = Math.ceil(value + 1);
+  el.value = value;
+}
+function updateAlignUi() {
+  setRange('alignX', S2.alignX);
+  setRange('alignZ', S2.alignZ);
+  setRange('alignYaw', S2.alignYaw * 180 / Math.PI);
+  document.getElementById('alignXOut').textContent = S2.alignX.toFixed(2).replace('.', ',') + ' m';
+  document.getElementById('alignZOut').textContent = S2.alignZ.toFixed(2).replace('.', ',') + ' m';
+  document.getElementById('alignYawOut').textContent =
+    (S2.alignYaw * 180 / Math.PI).toFixed(1).replace('.', ',') + '°';
+  const err = S2.error == null ? '' : ' · Wandfehler Ø ' +
+    S2.error.toFixed(2).replace('.', ',') + ' m';
+  document.getElementById('alignStatus').textContent =
+    (S2.alignmentSource || 'nicht ausgerichtet') + err;
 }
 
 // ---------- websocket ----------
@@ -276,8 +631,16 @@ function connect() {
 
 function handle(m) {
   if (!m.type) { addPoint(m); draw(); drawTimeline(); return; }
-  if (m.gridYawDegrees !== undefined) gridYaw = m.gridYawDegrees * Math.PI / 180;
+  if (m.gridYawDegrees !== undefined) {
+    const nextYaw = m.gridYawDegrees * Math.PI / 180;
+    const changed = Math.abs(nextYaw - gridYaw) > 0.0001;
+    gridYaw = nextYaw;
+    if (changed && S2.loaded && S2.alignmentSource.startsWith('automatisch')) {
+      autoAlignReference(); if (!S2.needsAuto) saveAlignment();
+    }
+  }
   switch (m.type) {
+    case 'speed_request': runSpeedTest(m.requestId); break;
     case 'samplebatch': (m.items || []).forEach(addPoint); break;
     case 'pose': {
       S.pose = m;
@@ -293,16 +656,47 @@ function handle(m) {
       floorBases = m.floorBases || [];
       floorLabels = m.floorLabels || [];
       relabelFloorOptions();
+      if (S2.loaded && (S2.needsAuto ||
+          S2.alignmentSource.startsWith('automatisch'))) {
+        autoAlignReference();
+        if (!S2.needsAuto) saveAlignment();
+      }
       break;
     case 'apfix': S.apfix = m; S.apfixAll = m.aps || null; break;
     case 'ping': S.pings = m.nodes || []; break;
     case 'notes': S.notes = m.notes || []; break;
     case 'drill': S.drills = m.lines || []; break;
     case 'roam': S.roams = m.events || []; break;
-    case 'clear': S.points = []; hist.length = 0; break;
+    case 'throughput': S.throughput = m.nodes || []; break;
+    case 'clear': resetDashboardSession(); break;
   }
   draw();
   drawTimeline();
+}
+
+function resetDashboardSession() {
+  speedGeneration++; speedRunning = false;
+  document.getElementById('btnSpeed').disabled = false;
+  S.points = []; S.pose = null; S.rooms = []; S.apfix = null; S.apfixAll = null;
+  S.pings = []; S.notes = []; S.drills = []; S.trail = []; S.roams = [];
+  S.throughput = [];
+  S2.points = []; S2.rooms = []; S2.loaded = false; S2.stem = '';
+  S2.alignX = S2.alignZ = S2.alignYaw = 0; S2.error = null;
+  compareOn = false; pivotPick = false; selected = null;
+  hist.length = 0; outages.length = 0; outageStart = 0;
+  floorsSeen.clear(); apsSeen.clear(); floorBases = []; floorLabels = [];
+  floorSel = 'all'; apSel = 'all'; gridYaw = 0;
+  document.getElementById('floor').innerHTML = `<option value='all'>Etage: Alle</option>`;
+  document.getElementById('ap').innerHTML = `<option value='all'>AP: Alle</option>`;
+  document.getElementById('cmpScan').value = '';
+  document.getElementById('alignControls').style.display = 'none';
+  document.getElementById('btnCompare').classList.remove('active');
+  document.getElementById('btnPivot').classList.remove('active');
+  document.getElementById('btnPivot').textContent = 'Drehpunkt im Plan setzen';
+  document.getElementById('speedStatus').textContent = 'Browser dient als lokale Gegenstelle.';
+  popupEl.style.display = 'none';
+  fcCanvas = null; fcKey = '';
+  updateCompareUi();
 }
 
 function bandLabel(freq) {
@@ -357,6 +751,10 @@ function addPoint(s) {
       + ' (…' + b.slice(-5) + ')';
     sel.appendChild(o);
   }
+  if (S2.loaded && S2.needsAuto && S.points.length >= 5) {
+    autoAlignReference();
+    if (!S2.needsAuto) saveAlignment();
+  }
 }
 
 // ---------- colours / legend ----------
@@ -385,25 +783,26 @@ function filterPoints(list) {
 function activePoints() { return filterPoints(S.points); }
 
 function gr(x, z) {
-  const c = Math.cos(gridYaw), s = Math.sin(gridYaw);
-  return [x * c - z * s, x * s + z * c];
+  return gridWithYaw(x, z, gridYaw);
 }
 function P(x, z) { const g = gr(x, z); return [sx(g[0]), sy(g[1])]; }
 
 let T = { minx:0, minz:0, scale:1, ox:0, oy:0, ch:0 };
 function computeTransform(pts) {
   let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
-  const add = (x, z) => { const g = gr(x, z);
+  const addGrid = g => {
     if (g[0] < minx) minx = g[0]; if (g[0] > maxx) maxx = g[0];
     if (g[1] < minz) minz = g[1]; if (g[1] > maxz) maxz = g[1]; };
+  const add = (x, z) => addGrid(gr(x, z));
+  const addRef = (x, z) => addGrid(referenceGrid(x, z));
   pts.forEach(p => add(p.x, p.z));
   if (L.rooms || mode === 'forecast')
     S.rooms.filter(roomOnSelectedFloor)
       .forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
   if (compareOn) {
-    filterPoints(S2.points).forEach(p => add(p.x, p.z));
+    filterPoints(S2.points).forEach(p => addRef(p.x, p.z));
     S2.rooms.filter(roomOnSelectedFloor)
-      .forEach(r => (r.cornersXZ || []).forEach(c => add(c.x, c.y)));
+      .forEach(r => (r.cornersXZ || []).forEach(c => addRef(c.x, c.y)));
   }
   if (minx > maxx) { minx = -2; maxx = 2; minz = -2; maxz = 2; }
   const pad = 0.6;
@@ -444,15 +843,16 @@ function draw() {
     cx.save();
     cx.beginPath(); cx.rect(0, 0, dx, cv.height); cx.clip();
     const refPts = filterPoints(S2.points);
-    if (mode === 'heat') drawHeatmap(refPts);
+    if (mode === 'heat') drawHeatmap(refPts, referenceGrid);
     else refPts.forEach(p => {
       cx.fillStyle = rssiColor(p.r);
-      const q = P(p.x, p.z);
+      const q = PRef(p.x, p.z);
       cx.fillRect(q[0] - 3, q[1] - 3, 6, 6);
     });
     cx.setLineDash([6, 4]);
-    S2.rooms.filter(roomOnSelectedFloor).forEach(drawRoom);
+    S2.rooms.filter(roomOnSelectedFloor).forEach(r => drawRoom(r, PRef));
     cx.setLineDash([]);
+    drawReferencePivot();
     cx.restore();
     // Rechts: live.
     cx.save();
@@ -475,8 +875,11 @@ function drawLive(pts) {
     cx.fillRect(q[0] - 3, q[1] - 3, 6, 6);
   });
   if (L.trail) drawTrail();
-  if (L.rooms) S.rooms.filter(roomOnSelectedFloor).forEach(drawRoom);
+  if (L.rooms) S.rooms.filter(roomOnSelectedFloor).forEach(r => drawRoom(r));
   if (L.ping) S.pings.forEach(drawPing);
+  if (L.throughput) S.throughput
+    .filter(p => floorSel === 'all' || String(p.floor || 0) === String(floorSel))
+    .forEach(drawThroughput);
   if (L.notes) S.notes.forEach(drawNote);
   if (L.roam) S.roams.forEach(drawRoam);
   if (L.ap) drawAps();
@@ -484,9 +887,10 @@ function drawLive(pts) {
 }
 
 // ---------- heatmap (IDW) ----------
-function drawHeatmap(pts) {
+function drawHeatmap(pts, project) {
   if (!pts.length) return;
-  const gp = pts.map(p => { const g = gr(p.x, p.z); return { x: g[0], z: g[1], r: p.r }; });
+  project = project || gr;
+  const gp = pts.map(p => { const g = project(p.x, p.z); return { x: g[0], z: g[1], r: p.r }; });
   let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
   gp.forEach(p => { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x;
     if (p.z < minz) minz = p.z; if (p.z > maxz) maxz = p.z; });
@@ -623,7 +1027,8 @@ function drawTrail() {
   cx.stroke();
 }
 
-function drawRoom(room) {
+function drawRoom(room, project) {
+  project = project || P;
   const c = room.cornersXZ || [];
   const n = c.length;
   if (n < 2) return;
@@ -636,8 +1041,8 @@ function drawRoom(room) {
     const eops = ops.filter(o => o.edgeIndex === i).sort((p, q) => p.startAlong - q.startAlong);
     let cur = 0;
     const seg = (f0, f1) => {
-      const p0 = P(a.x + (b.x - a.x) * f0, a.y + (b.y - a.y) * f0);
-      const p1 = P(a.x + (b.x - a.x) * f1, a.y + (b.y - a.y) * f1);
+      const p0 = project(a.x + (b.x - a.x) * f0, a.y + (b.y - a.y) * f0);
+      const p1 = project(a.x + (b.x - a.x) * f1, a.y + (b.y - a.y) * f1);
       cx.beginPath();
       cx.moveTo(p0[0], p0[1]);
       cx.lineTo(p1[0], p1[1]);
@@ -647,7 +1052,7 @@ function drawRoom(room) {
       const s0 = Math.max(cur, Math.min(1, o.startAlong / len));
       const e0 = Math.min(1, o.endAlong / len);
       if (s0 > cur) seg(cur, s0);
-      drawOpening(a, b, s0, e0, o.isDoor);
+      drawOpening(a, b, s0, e0, o.isDoor, project);
       cur = Math.max(cur, e0);
     }
     if (cur < 1) seg(cur, 1);
@@ -655,15 +1060,16 @@ function drawRoom(room) {
   if (room.name) {
     let cxm = 0, czm = 0;
     c.forEach(p => { cxm += p.x; czm += p.y; });
-    const q = P(cxm / n, czm / n);
+    const q = project(cxm / n, czm / n);
     label(room.name, q[0], q[1], '#8fd4ff');
   }
 }
 
-function drawOpening(a, b, f0, f1, isDoor) {
+function drawOpening(a, b, f0, f1, isDoor, project) {
+  project = project || P;
   const mx = a.x + (b.x - a.x) * (f0 + f1) / 2;
   const mz = a.y + (b.y - a.y) * (f0 + f1) / 2;
-  const q = P(mx, mz);
+  const q = project(mx, mz);
   cx.fillStyle = isDoor ? '#e08a3c' : '#e0c53c';
   cx.beginPath();
   cx.arc(q[0], q[1], 4, 0, 7);
@@ -704,6 +1110,17 @@ function drawPing(p) {
   cx.fillStyle = ms < 0 ? '#cc2222' : ms < 50 ? '#22bb44' : ms < 120 ? '#e6b800' : '#cc5522';
   cx.beginPath(); cx.arc(q[0], q[1], 6, 0, 7); cx.fill();
   label(ms < 0 ? 'Fehler' : ms + ' ms', q[0], q[1] - 12, '#ddd');
+}
+
+function drawThroughput(p) {
+  const q = P(p.posX, p.posZ);
+  const weak = Math.min(p.questToBrowserMbps || 0, p.browserToQuestMbps || 0);
+  cx.fillStyle = weak >= 150 ? '#35e65b' : weak >= 50 ? '#f0c629' : '#ef5348';
+  cx.beginPath(); cx.arc(q[0], q[1], 7, 0, 7); cx.fill();
+  cx.strokeStyle = '#ffffff'; cx.lineWidth = 1;
+  cx.beginPath(); cx.arc(q[0], q[1], 9, 0, 7); cx.stroke();
+  label('⇢' + (p.questToBrowserMbps || 0).toFixed(0) + ' ⇠' +
+    (p.browserToQuestMbps || 0).toFixed(0) + ' Mbit/s', q[0], q[1] - 15, '#dff5ff');
 }
 
 function drawNote(nt) {
@@ -876,8 +1293,47 @@ cv.addEventListener('click', e => {
   if (mode === '3d' && moved) return; // Orbit-Drag ist keine Auswahl
   if (mode === '3d') return;
   const r = cv.getBoundingClientRect();
-  pick(e.clientX - r.left, e.clientY - r.top);
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  if (pivotPick && compareOn) {
+    setPivotFromScreen(px, py);
+    return;
+  }
+  pick(px, py);
 });
+
+function setPivotFromScreen(px, py) {
+  const mapped = [T.minx + (px - T.ox) / T.scale,
+    T.minz + (T.ch - py - T.oy) / T.scale];
+  // Invert the current reference transform so changing the pivot does not
+  // make the plan jump. Only later slider rotations use the new hinge point.
+  const shifted = [mapped[0] - S2.alignX - S2.pivotX,
+                   mapped[1] - S2.alignZ - S2.pivotZ];
+  const inv = rotate2(shifted[0], shifted[1], -S2.alignYaw);
+  const base = [inv[0] + S2.pivotX, inv[1] + S2.pivotZ];
+  S2.pivotX = base[0]; S2.pivotZ = base[1];
+  S2.alignX = mapped[0] - base[0];
+  S2.alignZ = mapped[1] - base[1];
+  S2.needsAuto = false;
+  S2.alignmentSource = 'manuell · eigener Drehpunkt';
+  pivotPick = false;
+  const btn = document.getElementById('btnPivot');
+  btn.classList.remove('active');
+  btn.textContent = 'Drehpunkt im Plan setzen';
+  updateAlignmentError(); updateAlignUi(); saveAlignment(); draw();
+}
+
+function drawReferencePivot() {
+  if (!S2.loaded) return;
+  const q = referenceGridFromBase([S2.pivotX, S2.pivotZ]);
+  const x = sx(q[0]), y = sy(q[1]);
+  cx.save();
+  cx.strokeStyle = pivotPick ? '#ffd166' : 'rgba(255,209,102,0.65)';
+  cx.lineWidth = 2;
+  cx.beginPath(); cx.arc(x, y, 6, 0, 7); cx.stroke();
+  cx.beginPath(); cx.moveTo(x - 9, y); cx.lineTo(x + 9, y);
+  cx.moveTo(x, y - 9); cx.lineTo(x, y + 9); cx.stroke();
+  cx.restore();
+}
 
 function pick(px, py) {
   const hitR = 14;
@@ -892,6 +1348,7 @@ function pick(px, py) {
   });
   S.notes.forEach(n => test(P(n.posX, n.posZ), { kind: 'note', n }));
   S.pings.forEach(p => test(P(p.posX, p.posZ), { kind: 'ping', p }));
+  S.throughput.forEach(p => test(P(p.posX, p.posZ), { kind: 'throughput', p }));
   S.roams.forEach(ev => test(P(ev.posX, ev.posZ), { kind: 'roam', ev }));
   activePoints().forEach(p => test(P(p.x, p.z), { kind: 'point', p }));
 
@@ -914,6 +1371,11 @@ function pick(px, py) {
   else if (best.kind === 'ping')
     txt = 'Ping-Knoten\n' +
       (best.p.latencyMs < 0 ? 'Fehler' : best.p.latencyMs + ' ms');
+  else if (best.kind === 'throughput')
+    txt = 'Lokaler Durchsatz\nQuest → Browser: ' +
+      best.p.questToBrowserMbps.toFixed(1) + ' Mbit/s\nBrowser → Quest: ' +
+      best.p.browserToQuestMbps.toFixed(1) + ' Mbit/s\nLatenz: ' +
+      best.p.latencyMs.toFixed(0) + ' ms';
   else if (best.kind === 'roam')
     txt = 'Roaming\n…' + (best.ev.fromBssid || '').slice(-5) + ' → …' +
       (best.ev.toBssid || '').slice(-5) + '\n' +
@@ -932,6 +1394,7 @@ function selectionPos() {
   if (s.kind === 'ap') return P(s.ap.posX, s.ap.posZ);
   if (s.kind === 'note') return P(s.n.posX, s.n.posZ);
   if (s.kind === 'ping') return P(s.p.posX, s.p.posZ);
+  if (s.kind === 'throughput') return P(s.p.posX, s.p.posZ);
   if (s.kind === 'roam') return P(s.ev.posX, s.ev.posZ);
   return null;
 }
@@ -1005,7 +1468,8 @@ function updateStats(shown) {
   const last = S.points[S.points.length - 1];
   statsEl.textContent =
     'Punkte: ' + S.points.length + ' (angezeigt ' + shown + ')\n' +
-    'Räume: ' + S.rooms.length + '   Pings: ' + S.pings.length + '\n' +
+    'Räume: ' + S.rooms.length + '   Pings: ' + S.pings.length +
+    '   Speed: ' + S.throughput.length + '\n' +
     'Notizen: ' + S.notes.length + '   APs: ' + apsSeen.size +
     '   Roaming: ' + S.roams.length +
     (compareOn ? '\nVergleich: ' + S2.stem : '') +
@@ -1013,7 +1477,7 @@ function updateStats(shown) {
 }
 
 const sidecars = ['_rooms', '_drill', '_apfix', '_ping', '_notes', '_measure',
-  '_heatmap', '_walls', '_report', '_coverage', '_roam'];
+  '_heatmap', '_walls', '_report', '_coverage', '_roam', '_throughput'];
 function isScanJson(name) {
   if (!name.endsWith('.json')) return false;
   const stem = name.slice(0, -5);

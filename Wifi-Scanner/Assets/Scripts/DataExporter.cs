@@ -29,6 +29,7 @@ namespace WifiScanner
         {
             "_rooms", "_drill", "_apfix", "_ping", "_notes", "_measure",
             "_heatmap", "_walls", "_report", "_coverage", "_roam",
+            "_throughput",
         };
 
         /// <summary>
@@ -159,6 +160,13 @@ namespace WifiScanner
         public static bool TryLoadPing(string stem, out List<PingSample> nodes)
         {
             nodes = ReadSidecar<PingList>(stem, "ping")?.nodes;
+            return nodes != null;
+        }
+
+        public static bool TryLoadThroughput(string stem,
+            out List<ThroughputSample> nodes)
+        {
+            nodes = ReadSidecar<ThroughputList>(stem, "throughput")?.nodes;
             return nodes != null;
         }
 
@@ -639,6 +647,12 @@ namespace WifiScanner
             public List<PingSample> nodes;
         }
 
+        [Serializable]
+        private class ThroughputList
+        {
+            public List<ThroughputSample> nodes;
+        }
+
         /// <summary>Placed latency nodes (world position + ms) as JSON.</summary>
         public static string ExportPingJson(IReadOnlyList<PingSample> nodes, string stem)
         {
@@ -647,6 +661,18 @@ namespace WifiScanner
                 $"{stem}_ping.json");
             File.WriteAllText(path, JsonUtility.ToJson(wrapper, true));
             Debug.Log($"[DataExporter] Wrote {nodes.Count} ping node(s) to {path}");
+            return path;
+        }
+
+        public static string ExportThroughputJson(
+            IReadOnlyList<ThroughputSample> nodes, string stem)
+        {
+            var wrapper = new ThroughputList
+                { nodes = new List<ThroughputSample>(nodes) };
+            string path = Path.Combine(Application.persistentDataPath,
+                $"{stem}_throughput.json");
+            File.WriteAllText(path, JsonUtility.ToJson(wrapper, true));
+            Debug.Log($"[DataExporter] Wrote {nodes.Count} throughput node(s) to {path}");
             return path;
         }
 
@@ -757,6 +783,32 @@ namespace WifiScanner
                 }
             }
             Debug.Log($"[DataExporter] {count} Export-Datei(en) gelöscht.");
+            return count;
+        }
+
+        /// <summary>Deletes one export family (main files plus every sidecar)
+        /// without touching timestamped/manual scans. Used when a deliberate
+        /// new session invalidates the rolling crash-recovery autosave.</summary>
+        public static int DeleteExportStem(string stem)
+        {
+            if (string.IsNullOrWhiteSpace(stem)) return 0;
+            string[] patterns = { "*.csv", "*.json", "*.obj", "*.png", "*.svg", "*.html" };
+            int count = 0;
+            foreach (string pattern in patterns)
+                foreach (string file in Directory.GetFiles(
+                             Application.persistentDataPath, pattern))
+                {
+                    string fileStem = Path.GetFileNameWithoutExtension(file);
+                    if (fileStem != stem && !fileStem.StartsWith(stem + "_",
+                            StringComparison.Ordinal))
+                        continue;
+                    try { File.Delete(file); count++; }
+                    catch (IOException e)
+                    {
+                        Debug.LogWarning($"[DataExporter] Konnte {file} nicht " +
+                                         $"löschen: {e.Message}");
+                    }
+                }
             return count;
         }
 

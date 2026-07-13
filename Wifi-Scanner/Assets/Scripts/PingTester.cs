@@ -95,6 +95,9 @@ namespace WifiScanner
 
         private void Start()
         {
+            if (PlayerPrefs.HasKey("wifi_ping_host"))
+                host = PlayerPrefs.GetString("wifi_ping_host", host);
+
             var temp = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             _sphereMesh = temp.GetComponent<MeshFilter>().sharedMesh;
             Destroy(temp);
@@ -155,6 +158,17 @@ namespace WifiScanner
         // ---- Mode control ----
 
         public void ToggleActive() => SetActive(!IsActive);
+
+        /// <summary>Updates and persists the host edited in the wrist palette.</summary>
+        public bool SetHost(string value)
+        {
+            value = (value ?? "").Trim();
+            if (value.Length == 0) return false;
+            host = value;
+            PlayerPrefs.SetString("wifi_ping_host", host);
+            PlayerPrefs.Save();
+            return true;
+        }
 
         public void SetActive(bool active)
         {

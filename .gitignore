@@ -8,6 +8,7 @@
 [Uu]ser[Ss]ettings/
 [Mm]emoryCaptures/
 [Rr]ecordings/
+Wifi-Scanner/.utmp/
 
 # Build artifacts
 *.apk
@@ -35,3 +36,8 @@ tools/wifi_live.csv
 __pycache__/
 *.pyc
 tools/scans/
+
+# Local diagnostics / disabled manifest backups
+/Screenshot*.png
+Wifi-Scanner/Assets/Plugins/Android/*.DISABLED
+Wifi-Scanner/Assets/Plugins/Android/*.DISABLED.meta

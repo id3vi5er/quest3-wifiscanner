@@ -27,7 +27,7 @@ Dank der revolutionären Depth API der Quest 3 verschmelzen die virtuellen Daten
 ### Orientierung & Navigation
 Behalte auch in großen Gebäuden immer den Überblick:
 * **Interaktive Handgelenk-Minimap:** Auf deinem rechten Handgelenk befindet sich eine Live-Karte. Sie zeigt den komplett vermessenen Bereich (Boden-Heatmap), deine aktuelle Position als Pfeil und deine Blickrichtung. Die Karte wächst automatisch mit, je mehr Fläche du erkundest. Direkt darunter: die wichtigsten Echtzeit-Werte (Netzwerk/SSID, RSSI in dBm, Messpunkte, Aufnahme-Status) auf einen Blick.
-* **Werkzeug-Palette am linken Handgelenk:** Ein kurzer Blick zur linken Hand genügt — dort sitzt eine antippbare Palette mit allen Werkzeugen (Raum zeichnen, Türen/Fenster, Bohrplanung, Distanzmessung, Notizen, Ping-Test, Löschen, Scan-Ausrichtung). Das aktive Werkzeug leuchtet auf, und eine Kurzanleitung dazu wird direkt an der Hand eingeblendet — ganz ohne das Hauptmenü zu öffnen.
+* **Werkzeug-Palette am linken Handgelenk:** Ein kurzer Blick zur linken Hand genügt — dort sitzt eine antippbare Palette mit allen Werkzeugen (Raum zeichnen, Türen/Fenster, Bohrplanung, Distanzmessung, Notizen, Ping-Test, Löschen, Scan-Ausrichtung). Das aktive Werkzeug leuchtet auf, und eine Kurzanleitung dazu wird direkt an der Hand eingeblendet. Öffnung, Notiz oder Ping länger gedrückt halten öffnet direkt an der Hand die passenden Optionen für Tür/Fenster, Notiztyp beziehungsweise Ping-Host.
 
 ### Architektur-Tools: Raum-Zeichner (Room Tracer)
 Erstelle maßstabsgetreue Grundrisse direkt in AR:
@@ -38,7 +38,9 @@ Erstelle maßstabsgetreue Grundrisse direkt in AR:
 ### Präzisions-Werkzeuge & Bedienung
 * **Wand-Kalibrierung (Grid Align):** Richte das Raster der Heatmap mit wenigen Klicks parallel zu deinen echten Wänden aus, damit die exportierten Karten perfekt gerade sind.
 * **RSSI-Filter:** Du suchst nur nach Funklöchern? Blende starke Signale per Schieberegler einfach aus und zeige nur Werte unter z. B. -75 dBm an.
-* **Floating Control Panel:** Ein kompaktes virtuelles Tablet, das vor dir schwebt — übersichtlich in vier Tabs sortiert (Aufnahme / Ansicht / Räume / System). Hier steuerst du Deckkraft, Ansichtsmodi, Filter, Etagen, Export-Namen (via Systemtastatur) und startest/stoppst die Aufnahme.
+* **Floating Control Panel:** Ein kompaktes virtuelles Tablet, das vor dir schwebt — übersichtlich in vier Tabs sortiert (Aufnahme / Ansicht / Räume / System). Hier steuerst du Deckkraft, Ansichtsmodi, Filter, Etagen, Export-Namen (via Systemtastatur) und startest/stoppst die Aufnahme. Mit dem rechten Grip lässt es sich am Controller-Strahl greifen und frei im Raum ablegen; wenn du darum herumläufst, dreht es sich aufrecht zu dir mit.
+* **Sauberer Sessionwechsel:** „Neuer Scan“ fragt zuerst, ob die aktuelle Session exportiert werden soll. Danach werden Messpunkte, Räume, Etagen, Werkzeugdaten, Filter, Vergleich und Autosave vollständig zurückgesetzt; die leere Session bleibt pausiert, bis die Aufnahme bewusst gestartet wird. Verbundene Web-Dashboards wechseln live auf den leeren Scan.
+* **Lokaler Durchsatztest ohne PC-Software:** Das Quest-Web-Dashboard nutzt den geöffneten Browser direkt als Gegenstelle und misst adaptiv beide Richtungen (Quest → Browser und Browser → Quest) sowie die lokale Latenz. Der Test lässt sich im Browser oder über „Durchsatz messen“ auf dem Quest-Aufnahme-Panel starten. Das Ergebnis wird an der aktuellen Quest-Position als farbiger Knoten gespeichert, live angezeigt und in JSON und HTML-Report exportiert. Die Quest-Knoten lassen sich gesammelt ausblenden oder einzeln mit dem Löschwerkzeug entfernen. `receiver.py` ist dafür nicht nötig.
 
 ### Umfassender Daten-Export
 Wenn der Scan abgeschlossen ist, bleiben die Daten nicht in der Brille. Speichere deine Messergebnisse lokal auf der Quest und ziehe sie per PC-Skript (`pull_scans.ps1`) bequem auf deinen Rechner:

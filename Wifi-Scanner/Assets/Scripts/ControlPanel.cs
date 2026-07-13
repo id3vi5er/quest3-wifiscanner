@@ -43,6 +43,8 @@ namespace WifiScanner
         public CoverageSimulator coverage;
         public OnboardingGuide onboarding;
         public RoamingTracker roaming;
+        public MultiApScanner multiAp;
+        public ThroughputTester throughputTester;
         public NetworkStreamer streamer;
         public int streamPort = 9999;
 
@@ -51,6 +53,12 @@ namespace WifiScanner
         public float summonDistance = 0.75f;
         [Tooltip("Vertical offset relative to eye height when summoned (m).")]
         public float summonHeightOffset = -0.1f;
+        [Tooltip("Point at the panel and hold the RIGHT grip to move it freely.")]
+        public bool gripDragEnabled = true;
+        [Tooltip("Keep the panel upright and continuously turn its front towards the user.")]
+        public bool faceUserAutomatically = true;
+        [Tooltip("Maximum speed of the automatic turn towards the user (degrees/s).")]
+        public float faceUserDegreesPerSecond = 540f;
         public bool visibleAtStart = true;
 
         // dBm range covered by the filter sliders.
@@ -77,7 +85,17 @@ namespace WifiScanner
         private TextMeshProUGUI _coverageLabel;
         private TextMeshProUGUI _bssidLabel;
         private TextMeshProUGUI _roamLabel;
-        private int _bssidIndex = -1; // -1 = alle APs (Parallel-Ansicht)
+        private TextMeshProUGUI _multiApLabel;
+        private TextMeshProUGUI _throughputLabel;
+        private TextMeshProUGUI _throughputVisibilityLabel;
+        private int _throughputPendingCount = -1;
+        private float _throughputClaimUntil;
+        private float _throughputRequestUntil;
+        private float _throughputInfoUntil;
+        private string _throughputInfoText = "";
+        private string _bssidFilter = ""; // "" = alle APs (Parallel-Ansicht)
+        private GameObject _apListGo;     // AP-Dropdown (aufklappbare Liste)
+        private int _apListCount = -1;
         private GameObject _floorListGo; // Etagen-Dropdown (aufklappbare Liste)
         private int _floorListVersion = -1;
         private TextMeshProUGUI _roomNameLabel;
@@ -87,6 +105,11 @@ namespace WifiScanner
         private string _wipeInfoText = "";
         private TextMeshProUGUI _scanStemLabel;
         private TextMeshProUGUI _scanLoadLabel;
+        private TextMeshProUGUI _newScanLabel;
+        private GameObject _newScanPromptGo;
+        private bool _newScanWasRecording;
+        private float _newScanInfoUntil;
+        private string _newScanInfoText = "";
         private TextMeshProUGUI _diffStemLabel;
         private TextMeshProUGUI _diffToggleLabel;
         private readonly System.Collections.Generic.List<string> _diffStems =
@@ -104,8 +127,13 @@ namespace WifiScanner
         private InputAction _menuAction;
         private InputAction _posAction;
         private InputAction _rotAction;
+        private InputAction _gripAction;
         private float _statsTimer;
         private bool _placed;
+        private bool _pointerOverRoot;
+        private bool _dragging;
+        private Vector3 _dragLocalPosition;
+        private Quaternion _dragLocalRotation;
 
         // Tab pages: Aufnahme / Ansicht / Räume / System.
         private readonly GameObject[] _pages = new GameObject[4];
@@ -137,8 +165,11 @@ namespace WifiScanner
             _rotAction = new InputAction("PanelRot", InputActionType.Value,
                 "<XRController>{RightHand}/pointerRotation", expectedControlType: "Quaternion");
             _rotAction.AddBinding("<XRController>{RightHand}/deviceRotation"); // fallback
+            _gripAction = new InputAction("MovePanel", InputActionType.Button,
+                "<XRController>{RightHand}/gripPressed");
             _posAction.Enable();
             _rotAction.Enable();
+            _gripAction.Enable();
         }
 
         private void OnDisable()
@@ -146,6 +177,8 @@ namespace WifiScanner
             _menuAction?.Disable();
             _posAction?.Disable();
             _rotAction?.Disable();
+            _gripAction?.Disable();
+            _dragging = false;
             XrUiHover.Clear(this);
         }
 
@@ -154,10 +187,13 @@ namespace WifiScanner
             if (_root == null) return;
 
             UpdatePointerOverPanel();
+            UpdateGripDrag();
 
             if (_menuAction.WasPressedThisFrame())
             {
                 bool show = !_root.activeSelf;
+                _dragging = false;
+                if (!show) CancelNewScanPrompt(resumeRecording: true);
                 _root.SetActive(show);
                 if (show)
                 {
@@ -179,6 +215,14 @@ namespace WifiScanner
             }
         }
 
+        private void LateUpdate()
+        {
+            // Run after XR/controller pose updates and after grip dragging so
+            // the panel remains readable while the user walks around it.
+            if (faceUserAutomatically && _root != null && _root.activeSelf)
+                FaceTowardsUser();
+        }
+
         // ---- Tabs ----
 
         private void SelectTab(int index)
@@ -196,6 +240,7 @@ namespace WifiScanner
             _wipeArmedUntil = 0f;
             _loadArmedUntil = 0f;
             _roomsClearArmedUntil = 0f;
+            CancelNewScanPrompt(resumeRecording: true);
         }
 
         // ---- Actions ----
@@ -215,6 +260,38 @@ namespace WifiScanner
             Debug.Log($"[ControlPanel] Export -> {dir}");
         }
 
+        private void OnThroughputClicked()
+        {
+            if (_throughputPendingCount >= 0 &&
+                Time.unscaledTime < _throughputRequestUntil)
+                return;
+
+            if (webServer == null || !webServer.IsRunning)
+            {
+                ShowThroughputInfo("Web-Dashboard ist aus", 4f);
+                return;
+            }
+            if (!webServer.RequestBrowserThroughputTest())
+            {
+                ShowThroughputInfo("Erst Webinterface öffnen", 5f);
+                return;
+            }
+
+            _throughputPendingCount = throughputTester != null
+                ? throughputTester.NodeCount : 0;
+            _throughputClaimUntil = Time.unscaledTime + 8f;
+            _throughputRequestUntil = Time.unscaledTime + 90f;
+            _throughputInfoText = "Browser wird angefragt ...";
+            _throughputInfoUntil = _throughputRequestUntil;
+        }
+
+        private void ShowThroughputInfo(string text, float seconds)
+        {
+            _throughputPendingCount = -1;
+            _throughputInfoText = text;
+            _throughputInfoUntil = Time.unscaledTime + seconds;
+        }
+
         private void OnClearClicked()
         {
             if (collector == null) return;
@@ -226,6 +303,57 @@ namespace WifiScanner
                     () => collector.LoadSamples(snapshot));
             }
             collector.ClearAll();
+        }
+
+        private void OnNewScanClicked()
+        {
+            if (collector == null || _newScanPromptGo == null) return;
+            _newScanWasRecording = collector.IsRecording;
+            collector.StopRecording(); // freeze the exact export/reset decision state
+            _newScanPromptGo.SetActive(true);
+            if (_newScanLabel != null)
+                _newScanLabel.text = "<color=#FFB86B>Export vorher?</color>";
+        }
+
+        private void CompleteNewScan(bool exportFirst)
+        {
+            if (collector == null) return;
+            if (exportFirst)
+            {
+                try
+                {
+                    collector.Export();
+                }
+                catch (System.Exception e)
+                {
+                    _newScanInfoText = "Export fehlgeschlagen – Daten behalten";
+                    _newScanInfoUntil = Time.unscaledTime + 4f;
+                    Debug.LogError($"[ControlPanel] Neuer Scan abgebrochen: {e.Message}");
+                    return; // never destroy data after a failed requested export
+                }
+            }
+
+            collector.ResetSession();
+            SetBssidFilter("");
+            _diffStems.Clear();
+            _diffIndex = 0;
+            sessionLoader?.RefreshStems();
+            _newScanPromptGo?.SetActive(false);
+            _newScanWasRecording = false;
+            _newScanInfoText = exportFirst
+                ? "Exportiert · neuer Scan bereit (Pause)"
+                : "Neuer Scan bereit (Pause)";
+            _newScanInfoUntil = Time.unscaledTime + 3f;
+            RefreshStats();
+        }
+
+        private void CancelNewScanPrompt(bool resumeRecording)
+        {
+            if (_newScanPromptGo == null || !_newScanPromptGo.activeSelf) return;
+            _newScanPromptGo.SetActive(false);
+            if (resumeRecording && _newScanWasRecording && collector != null)
+                collector.StartRecording();
+            _newScanWasRecording = false;
         }
 
         // Deletes ALL export files on the device (frees storage). Destructive,
@@ -386,18 +514,20 @@ namespace WifiScanner
             foreach (Transform child in _floorListGo.transform)
                 Destroy(child.gameObject);
 
-            AddFloorEntry("Alle Etagen", floorManager.ShowAll, () =>
-            {
-                floorManager.ShowAllFloors();
-                _floorListGo.SetActive(false);
-            });
+            AddListEntry(_floorListGo.transform, "Alle Etagen",
+                floorManager.ShowAll, () =>
+                {
+                    floorManager.ShowAllFloors();
+                    _floorListGo.SetActive(false);
+                });
             var floors = floorManager.Floors;
             for (int i = floors.Count - 1; i >= 0; i--)
             {
                 int index = i;
                 bool active = !floorManager.ShowAll &&
                               floorManager.ActiveIndex == index;
-                AddFloorEntry($"{floors[i].label}   ({floors[i].baseY:F1} m)",
+                AddListEntry(_floorListGo.transform,
+                    $"{floors[i].label}   ({floors[i].baseY:F1} m)",
                     active, () =>
                     {
                         floorManager.SelectFloor(index);
@@ -406,11 +536,12 @@ namespace WifiScanner
             }
         }
 
-        private void AddFloorEntry(string text, bool active,
+        // One 44-px dropdown row (shared by the floor and AP lists).
+        private void AddListEntry(Transform parent, string text, bool active,
             UnityEngine.Events.UnityAction onClick)
         {
-            var go = new GameObject("FloorEntry", typeof(RectTransform));
-            go.transform.SetParent(_floorListGo.transform, false);
+            var go = new GameObject("ListEntry", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
             go.AddComponent<LayoutElement>().preferredHeight = 44f;
             var img = go.AddComponent<Image>();
             img.color = active ? UiBuilder.ActiveColor : UiBuilder.ButtonColor;
@@ -437,16 +568,57 @@ namespace WifiScanner
 
         private void OnCoverageClicked() => coverage?.Toggle();
 
-        // Cycles the per-AP heatmap: Alle (parallel) → AP1 → AP2 → … → Alle.
-        // Heatmap AND AP-locator icons follow the same selection.
-        private void OnBssidCycleClicked()
+        private void OnMultiApClicked() => multiAp?.Toggle();
+
+        private void OnThroughputVisibilityClicked() => throughputTester?.ToggleVisible();
+
+        // AP dropdown: pick "Alle" (parallel view) or one BSSID — heatmap AND
+        // AP-locator icons follow the same selection.
+        private void OnApDropdownClicked()
         {
-            if (collector == null || floor == null) return;
+            if (_apListGo == null) return;
+            bool show = !_apListGo.activeSelf;
+            if (show) RebuildApList();
+            _apListGo.SetActive(show);
+        }
+
+        private void SetBssidFilter(string bssid)
+        {
+            _bssidFilter = bssid ?? "";
+            floor?.SetBssidFilter(_bssidFilter);
+            apLocator?.SetBssidFilter(_bssidFilter);
+        }
+
+        // One button per known AP (order of first appearance) + "Alle APs".
+        private void RebuildApList()
+        {
+            if (_apListGo == null || collector == null) return;
             var bssids = collector.KnownBssids;
-            _bssidIndex = _bssidIndex + 1 >= bssids.Count ? -1 : _bssidIndex + 1;
-            string filter = _bssidIndex >= 0 ? bssids[_bssidIndex].bssid : "";
-            floor.SetBssidFilter(filter);
-            apLocator?.SetBssidFilter(filter);
+            _apListCount = bssids.Count;
+            foreach (Transform child in _apListGo.transform)
+                Destroy(child.gameObject);
+
+            AddListEntry(_apListGo.transform, $"Alle APs ({bssids.Count})",
+                _bssidFilter.Length == 0, () =>
+                {
+                    SetBssidFilter("");
+                    _apListGo.SetActive(false);
+                });
+            for (int i = 0; i < bssids.Count; i++)
+            {
+                var info = bssids[i];
+                string ssid = string.IsNullOrEmpty(info.ssid) ? "?" : info.ssid;
+                if (ssid.Length > 12) ssid = ssid.Substring(0, 11) + "…";
+                string tail = info.bssid.Length > 5
+                    ? info.bssid.Substring(info.bssid.Length - 5) : info.bssid;
+                AddListEntry(_apListGo.transform,
+                    $"{ssid} · {Sample.BandLabel(info.frequencyMhz)} · …{tail}",
+                    _bssidFilter == info.bssid, () =>
+                    {
+                        SetBssidFilter(info.bssid);
+                        _apListGo.SetActive(false);
+                    });
+            }
         }
 
         private void OnRoamingClicked() => roaming?.Toggle();
@@ -596,26 +768,78 @@ namespace WifiScanner
             if (_bssidLabel != null && collector != null)
             {
                 var bssids = collector.KnownBssids;
-                if (_bssidIndex >= bssids.Count)
+                if (_bssidFilter.Length > 0)
                 {
-                    // List shrank (clear/load): drop the stale filter too.
-                    _bssidIndex = -1;
-                    floor?.SetBssidFilter("");
-                    apLocator?.SetBssidFilter("");
+                    // Selected AP vanished (clear/load)? Drop the stale filter.
+                    SampleCollector.BssidInfo selected = null;
+                    foreach (var info in bssids)
+                        if (info.bssid == _bssidFilter) { selected = info; break; }
+                    if (selected == null)
+                    {
+                        SetBssidFilter("");
+                        _bssidLabel.text = $"AP: Alle ({bssids.Count}) ▾";
+                    }
+                    else
+                    {
+                        string ssid = string.IsNullOrEmpty(selected.ssid)
+                            ? "?" : selected.ssid;
+                        if (ssid.Length > 10) ssid = ssid.Substring(0, 9) + "…";
+                        _bssidLabel.text = $"AP: {ssid} · " +
+                            $"{Sample.BandLabel(selected.frequencyMhz)} ▾";
+                    }
                 }
-                if (_bssidIndex < 0)
-                    _bssidLabel.text = $"AP: Alle ({bssids.Count})";
                 else
                 {
-                    var info = bssids[_bssidIndex];
-                    _bssidLabel.text = $"AP {_bssidIndex + 1}/{bssids.Count} · " +
-                                       $"{Sample.BandLabel(info.frequencyMhz)}";
+                    _bssidLabel.text = $"AP: Alle ({bssids.Count}) ▾";
                 }
+                // Open dropdown follows new networks appearing.
+                if (_apListGo != null && _apListGo.activeSelf &&
+                    bssids.Count != _apListCount)
+                    RebuildApList();
             }
             if (_roamLabel != null && roaming != null)
                 _roamLabel.text = roaming.IsVisible
                     ? $"Roaming: an ({roaming.Events.Count})"
                     : "Roaming: aus";
+            if (_multiApLabel != null && multiAp != null)
+                _multiApLabel.text = multiAp.StatusLabel;
+            if (_throughputLabel != null)
+            {
+                if (_throughputPendingCount >= 0 && throughputTester != null &&
+                    throughputTester.NodeCount > _throughputPendingCount)
+                {
+                    var samples = throughputTester.Samples;
+                    var result = samples[samples.Count - 1];
+                    ShowThroughputInfo(
+                        $"Q>PC {result.questToBrowserMbps:F0} | PC>Q " +
+                        $"{result.browserToQuestMbps:F0} Mbit/s", 8f);
+                }
+                else if (_throughputPendingCount >= 0 &&
+                         Time.unscaledTime >= _throughputClaimUntil &&
+                         (webServer == null ||
+                          !webServer.BrowserThroughputTestActive))
+                {
+                    ShowThroughputInfo("Browser reagiert nicht - neu laden", 7f);
+                }
+                else if (_throughputPendingCount >= 0 && webServer != null &&
+                         webServer.BrowserThroughputTestActive)
+                {
+                    _throughputInfoText = "Durchsatz: Test läuft ...";
+                }
+                else if (_throughputPendingCount >= 0 &&
+                         Time.unscaledTime >= _throughputRequestUntil)
+                {
+                    ShowThroughputInfo("Durchsatz: kein Ergebnis", 5f);
+                }
+
+                _throughputLabel.text = Time.unscaledTime < _throughputInfoUntil
+                    ? _throughputInfoText
+                    : $"Durchsatz messen ({(throughputTester != null ? throughputTester.NodeCount : 0)})";
+            }
+            if (_throughputVisibilityLabel != null && throughputTester != null)
+                _throughputVisibilityLabel.text = throughputTester.IsVisible
+                    ? $"Durchsatzpunkte: an ({throughputTester.NodeCount})"
+                    : $"Durchsatzpunkte: aus ({throughputTester.NodeCount})";
             if (_coverageLabel != null && coverage != null)
                 _coverageLabel.text = !coverage.IsVisible
                     ? "Prognose: aus"
@@ -655,6 +879,15 @@ namespace WifiScanner
                 else
                     _scanLoadLabel.text = "Laden";
             }
+            if (_newScanLabel != null)
+            {
+                if (Time.unscaledTime < _newScanInfoUntil)
+                    _newScanLabel.text = _newScanInfoText;
+                else if (_newScanPromptGo != null && _newScanPromptGo.activeSelf)
+                    _newScanLabel.text = "<color=#FFB86B>Export vorher?</color>";
+                else
+                    _newScanLabel.text = "Neuer Scan";
+            }
         }
 
         // "wifi_20250704_213012" -> "20250704_213012", middle-ellipsed so it
@@ -676,15 +909,80 @@ namespace WifiScanner
         {
             if (_root == null || !_root.activeSelf)
             {
+                _pointerOverRoot = false;
                 XrUiHover.Set(this, false);
                 return;
             }
             GetPointer(out Vector3 origin, out Vector3 dir);
-            XrUiHover.Set(this, XrUiHover.RayOverRect(origin, dir,
-                (RectTransform)_root.transform, margin: 0.04f));
+            _pointerOverRoot = XrUiHover.RayOverRect(origin, dir,
+                (RectTransform)_root.transform, margin: 0.04f);
+            // Keep the UI guard asserted while dragging even if the pointer
+            // slips outside the moving rectangle for a frame.
+            XrUiHover.Set(this, _pointerOverRoot || _dragging);
+        }
+
+        private void UpdateGripDrag()
+        {
+            if (!gripDragEnabled || _gripAction == null || _root == null)
+                return;
+
+            GetPointerPose(out Vector3 handPos, out Quaternion handRot);
+            if (_dragging)
+            {
+                if (!_gripAction.IsPressed() || !_root.activeSelf)
+                {
+                    _dragging = false;
+                    Haptics.PlaceRight();
+                    return;
+                }
+                _root.transform.position = handPos + handRot * _dragLocalPosition;
+                if (!faceUserAutomatically)
+                    _root.transform.rotation = handRot * _dragLocalRotation;
+                _placed = true;
+                return;
+            }
+
+            if (_root.activeSelf && _pointerOverRoot &&
+                _gripAction.WasPressedThisFrame())
+            {
+                _dragLocalPosition = Quaternion.Inverse(handRot) *
+                    (_root.transform.position - handPos);
+                _dragLocalRotation = Quaternion.Inverse(handRot) *
+                    _root.transform.rotation;
+                _dragging = true;
+                XrUiHover.Set(this, true);
+                Haptics.TickRight();
+            }
+        }
+
+        private void FaceTowardsUser()
+        {
+            var cam = Camera.main;
+            if (cam == null) return;
+
+            // World-space canvases in this project show their front on the
+            // -forward side. Therefore forward points from the user towards
+            // the panel, matching PlaceInFrontOfUser's established orientation.
+            Vector3 awayFromUser = _root.transform.position - cam.transform.position;
+            awayFromUser.y = 0f; // stay upright; only yaw follows the user
+            if (awayFromUser.sqrMagnitude < 1e-4f) return;
+
+            Quaternion target = Quaternion.LookRotation(awayFromUser.normalized,
+                Vector3.up);
+            float step = Mathf.Max(0f, faceUserDegreesPerSecond) *
+                Time.unscaledDeltaTime;
+            _root.transform.rotation = step > 0f
+                ? Quaternion.RotateTowards(_root.transform.rotation, target, step)
+                : target;
         }
 
         private void GetPointer(out Vector3 worldPos, out Vector3 worldFwd)
+        {
+            GetPointerPose(out worldPos, out Quaternion worldRot);
+            worldFwd = worldRot * Vector3.forward;
+        }
+
+        private void GetPointerPose(out Vector3 worldPos, out Quaternion worldRot)
         {
             Vector3 pos = _posAction.ReadValue<Vector3>();
             Quaternion rot = _rotAction.ReadValue<Quaternion>();
@@ -693,12 +991,12 @@ namespace WifiScanner
             if (space != null)
             {
                 worldPos = space.TransformPoint(pos);
-                worldFwd = space.rotation * rot * Vector3.forward;
+                worldRot = space.rotation * rot;
             }
             else
             {
                 worldPos = pos;
-                worldFwd = rot * Vector3.forward;
+                worldRot = rot;
             }
         }
 
@@ -802,7 +1100,34 @@ namespace WifiScanner
                 _scanStemLabel = loadLabels[0];
                 _scanLoadLabel = loadLabels[1];
             }
-            UiBuilder.AddButtonRow(page, ("Punkte löschen", OnClearClicked));
+            var resetLabels = UiBuilder.AddButtonRow(page,
+                ("Punkte löschen", OnClearClicked),
+                ("Neuer Scan", OnNewScanClicked));
+            _newScanLabel = resetLabels[1];
+
+            _newScanPromptGo = new GameObject("NewScanPrompt", typeof(RectTransform));
+            _newScanPromptGo.transform.SetParent(page, false);
+            var promptLayout = _newScanPromptGo.AddComponent<VerticalLayoutGroup>();
+            promptLayout.spacing = 6f;
+            promptLayout.childControlWidth = true;
+            promptLayout.childControlHeight = true;
+            promptLayout.childForceExpandWidth = true;
+            promptLayout.childForceExpandHeight = false;
+            var promptText = UiBuilder.AddText(_newScanPromptGo.transform,
+                "Aktuelle Session vorher exportieren?", 18f,
+                FontStyles.Bold, TextAlignmentOptions.Center);
+            promptText.gameObject.AddComponent<LayoutElement>().preferredHeight = 30f;
+            UiBuilder.AddButtonRow(_newScanPromptGo.transform,
+                ("Export + Neu", () => CompleteNewScan(exportFirst: true)),
+                ("Ohne Export", () => CompleteNewScan(exportFirst: false)),
+                ("Abbrechen", () => CancelNewScanPrompt(resumeRecording: true)));
+            _newScanPromptGo.SetActive(false);
+            if (multiAp != null)
+                _multiApLabel = UiBuilder.AddButtonRow(page,
+                    ("Multi-AP-Scan: an", OnMultiApClicked))[0];
+            if (webServer != null && throughputTester != null)
+                _throughputLabel = UiBuilder.AddButtonRow(page,
+                    ("Durchsatz messen (0)", OnThroughputClicked))[0];
             if (floor != null)
             {
                 var diffLabels = UiBuilder.AddButtonRow(page,
@@ -837,10 +1162,25 @@ namespace WifiScanner
             _mapRotateLabel = mapApLabels[0];
             _apLabel = mapApLabels[1];
             var bssidLabels = UiBuilder.AddButtonRow(page,
-                ("AP: Alle", OnBssidCycleClicked),
+                ("AP: Alle ▾", OnApDropdownClicked),
                 ("Roaming: an", OnRoamingClicked));
             _bssidLabel = bssidLabels[0];
             _roamLabel = bssidLabels[1];
+            if (throughputTester != null)
+                _throughputVisibilityLabel = UiBuilder.AddButtonRow(page,
+                    ("Durchsatzpunkte: an (0)", OnThroughputVisibilityClicked))[0];
+
+            // Collapsible AP list ("dropdown"): all known BSSIDs, filled on
+            // open — with multi-AP scanning this grows beyond a cycle button.
+            _apListGo = new GameObject("ApList", typeof(RectTransform));
+            _apListGo.transform.SetParent(page, false);
+            var apListLayout = _apListGo.AddComponent<VerticalLayoutGroup>();
+            apListLayout.spacing = 6f;
+            apListLayout.childControlWidth = true;
+            apListLayout.childControlHeight = true;
+            apListLayout.childForceExpandWidth = true;
+            apListLayout.childForceExpandHeight = false;
+            _apListGo.SetActive(false);
             if (geiger != null && coverage != null)
             {
                 var extraRow = UiBuilder.AddButtonRow(page,
@@ -967,7 +1307,9 @@ namespace WifiScanner
                 "R-Stick-Klick   Ansicht wechseln\n" +
                 "Y (links)   Minimap an/aus\n" +
                 "Menü (links)   dieses Menü\n" +
+                "R-Grip über Menü   Menü greifen/verschieben\n" +
                 "Werkzeuge: Palette am linken Handgelenk —\n" +
+                "Öffnung/Notiz/Ping halten = Optionen;\n" +
                 "aktives Werkzeug belegt Trigger/A/B.",
                 18f, FontStyles.Normal, TextAlignmentOptions.TopLeft);
             help.color = new Color(1f, 1f, 1f, 0.75f);

@@ -6,21 +6,23 @@ namespace WifiScanner
     /// <summary>
     /// Universal delete mode ("Löschen" on the panel). While active, the right
     /// controller's pointer ray is tested against every deletable element —
-    /// traced rooms, drill lines, distance measurements, spatial notes and ping
-    /// nodes. The nearest target within hitRadius highlights; a DOUBLE trigger
+    /// traced rooms, drill lines, distance measurements, spatial notes, ping
+    /// nodes and throughput nodes. The nearest target within hitRadius highlights; a DOUBLE trigger
     /// press on it deletes it (the first press arms with a "nochmal drücken"
     /// prompt, a safety confirmation). Hover is re-resolved every frame — indices
     /// shift after a delete. Created and wired by SceneBootstrap.
     /// </summary>
     public class DeleteController : MonoBehaviour, IExclusiveTool
     {
-        private enum TargetKind { None, Room, DrillLine, Measurement, PingNode, Note }
+        private enum TargetKind
+            { None, Room, DrillLine, Measurement, PingNode, ThroughputNode, Note }
 
         [Header("Wired by SceneBootstrap")]
         public RoomTracer roomTracer;
         public DrillPlanner drill;
         public DistanceMeasurer distanceMeasurer;
         public PingTester pingTester;
+        public ThroughputTester throughputTester;
         public SpatialNoteManager spatialNotes;
 
         [Header("Deleting")]
@@ -126,6 +128,13 @@ namespace WifiScanner
                         Consider(RayPointDistance(origin, dir, p), TargetKind.PingNode,
                             i, ref best, ref kind, ref index);
 
+            if (throughputTester != null)
+                for (int i = 0; i < throughputTester.NodeCount; i++)
+                    if (throughputTester.TryGetNodePos(i, out Vector3 p))
+                        Consider(RayPointDistance(origin, dir, p),
+                            TargetKind.ThroughputNode, i,
+                            ref best, ref kind, ref index);
+
             if (spatialNotes != null)
                 for (int i = 0; i < spatialNotes.Notes.Count; i++)
                     if (spatialNotes.TryGetNotePos(i, out Vector3 p))
@@ -218,6 +227,7 @@ namespace WifiScanner
                 case TargetKind.DrillLine: drill?.RemoveLine(index); break;
                 case TargetKind.Measurement: distanceMeasurer?.RemoveMeasurement(index); break;
                 case TargetKind.PingNode: pingTester?.RemoveNode(index); break;
+                case TargetKind.ThroughputNode: throughputTester?.RemoveNode(index); break;
                 case TargetKind.Note: spatialNotes?.RemoveNote(index); break;
             }
         }
@@ -248,6 +258,8 @@ namespace WifiScanner
                 case TargetKind.DrillLine: drill?.SetLineHighlight(index, on); break;
                 case TargetKind.Measurement: distanceMeasurer?.SetHighlight(index, on); break;
                 case TargetKind.PingNode: pingTester?.SetHighlight(index, on); break;
+                case TargetKind.ThroughputNode:
+                    throughputTester?.SetHighlight(index, on); break;
                 case TargetKind.Note: spatialNotes?.SetHighlight(index, on); break;
             }
         }
@@ -286,6 +298,9 @@ namespace WifiScanner
                     return true;
                 case TargetKind.PingNode:
                     return pingTester != null && pingTester.TryGetNodePos(index, out pos);
+                case TargetKind.ThroughputNode:
+                    return throughputTester != null &&
+                           throughputTester.TryGetNodePos(index, out pos);
                 case TargetKind.Note:
                     return spatialNotes != null && spatialNotes.TryGetNotePos(index, out pos);
             }

@@ -11,6 +11,7 @@ entstehen im **MR-Passthrough**:
 - ein **manuell gezeichneter, massstaeblicher Grundriss** inklusive Raumhoehen,
   Tueren/Fenstern und optionalen Bohr-, Mess-, Ping- und Notiz-Markern,
 - eine **Handgelenk-Minimap** und ein **Web-Dashboard** fuer Live-Ansicht,
+- einen **lokalen bidirektionalen Durchsatztest** direkt gegen den Dashboard-Browser,
   Downloads und Scan-Export im lokalen Netzwerk.
 
 Die App arbeitet ohne vorherigen Meta-Space-Setup-Raumscan. Virtuelle Punkte
@@ -196,6 +197,8 @@ per A-Taste oder Panel gestartet.
 | R-Stick-Klick | Ansicht wechseln: Punktwolke -> Heatmap -> Beides |
 | Y (links) | Minimap ein-/ausblenden |
 | Menue-Taste (links) | Bedienpanel ein-/ausblenden |
+| R-Grip ueber dem Bedienpanel | Panel greifen und frei ablegen; es dreht sich danach automatisch zum Nutzer |
+| Oeffnung/Notiz/Ping lange druecken | Werkzeugoptionen an der Hand oeffnen |
 | Beide Grips nach "Grid ausrichten" | Wand-Kalibrierlinie uebernehmen |
 | Zeichenmodus: Trigger / B / A | Ecke setzen / Raum schliessen / letzte Ecke zurueck |
 
@@ -211,6 +214,7 @@ Das World-Space-Panel wird mit dem Controller-Strahl bedient.
 - Export-Name
 - PC-IP fuer UDP-Live-Stream
 - Aufnahme / Export
+- Neuer Scan mit Auswahl "Export + Neu" / "Ohne Export" / "Abbrechen"; die leere Session startet pausiert
 - Punkte loeschen
 - alle Scan-Dateien vom Geraet loeschen (Zwei-Klick-Bestaetigung)
 - Scan-Auswahl, Scan laden (Zwei-Klick-Bestaetigung)

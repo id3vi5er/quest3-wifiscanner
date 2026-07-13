@@ -140,9 +140,27 @@ Achtung Technik: App-Screenshots enthalten KEIN Passthrough (das Kamerabild
 komponiert das OS außerhalb des Eye-Buffers); echte Fotos brauchen die Meta
 Passthrough Camera API (experimentell, eigene Permission, HorizonOS v74+).
 
-**Zurückgestellt:** 1 (Multi-AP-Scan), 4 (Durchsatz-Knoten),
-5 (Latenz-Dauermessung), 13 (Panel greifen), 15 (Palette-Langdruck),
-Foto-Notiz (neu).
+**Update (2026-07-11):** 1 (Multi-AP-Scan) UMGESETZT (M29) — ohne ADB,
+store-tauglich: passives Mitlesen der System-Scans (getScanResults-Cache,
+Timestamp-Dedupe), distanzbasiertes Aktiv-Scan-Budget (4/2 min), adaptives
+Tempo (startScan-false → Backoff); alle Netze ≥ −90 dBm, nur Heatmap/Minimap
+(keine Punktwolken-Kugeln), Panel-Toggle im Aufnahme-Tab, AP-Auswahl als
+Dropdown.
+
+**Update (2026-07-12):** 13 (Panel greifen) und 15 (Palette-Langdruck) sind
+UMGESETZT: Das Hauptpanel lässt sich mit dem rechten Grip am Pointer greifen
+und frei ablegen; anschließend dreht es sich beim Herumlaufen aufrecht zum
+Nutzer mit. Langes Drücken auf Öffnung/Notiz/Ping öffnet ein Optionsblatt
+an der Hand (Tür/Fenster, Notiztyp, persistenter Ping-Host), ohne anschließend
+zusätzlich den normalen Werkzeug-Klick auszulösen.
+
+**Update (2026-07-12):** 4 (Durchsatz-Knoten) ist UMGESETZT als lokaler,
+browsergestützter Test direkt über das Quest-Web-Dashboard: adaptive parallele
+HTTP-Messung Quest→Browser und Browser→Quest, kein `receiver.py`, räumlicher
+Knoten mit BSSID/Band/Latenz, Live-Anzeige sowie Session-/JSON-/Report-Integration.
+
+**Zurückgestellt:** 5 (Latenz-Dauermessung),
+Foto-Notiz (neu), 21 (Elektro-/Medienplan).
 
 ## A) Messung & Analyse
 
@@ -159,7 +177,7 @@ Foto-Notiz (neu).
 3. **Band-/Kanal-Tagging:** `WifiInfo.frequency` pro Sample mitschreiben
    (Sample-Feld + CSV-Spalte, wie `floor`); Filter „nur 2,4 / nur 5 / nur 6
    GHz“ neben dem RSSI-Filter. Erklärt RSSI-Sprünge durch Band-Steering.
-4. **Durchsatz-Knoten (Speedtest):** Wie PingTester, aber misst ~2 s
+4. **Durchsatz-Knoten (Speedtest) — UMGESETZT (2026-07-12):** Wie PingTester, aber misst ~2 s
    TCP-Download von einer konfigurierbaren URL (z. B. Datei auf dem PC, der eh
    receiver.py laufen hat) → Mbps-Knoten mit Farbband. RSSI ist nicht alles —
    Durchsatz ist die Wahrheit. PingTester ist die fertige Vorlage.
@@ -194,11 +212,11 @@ Foto-Notiz (neu).
 12. **Autosave-Wiederherstellung beim Start:** Wenn `wifi_autosave` existiert,
     beim Start fragen „Letzte Session fortsetzen?“ (SessionLoader existiert —
     nur ein Start-Prompt nötig). Schützt vor Akku-leer/Absturz-Frust.
-13. **Panel greifen & verschieben:** Das schwebende Menü am Rand mit Grip
+13. **Panel greifen & verschieben — UMGESETZT (2026-07-12):** Das schwebende Menü am Rand mit Grip
     packen und frei positionieren (statt nur Neu-Beschwören vor dem Nutzer).
 14. **Sprachdiktat für Notizen:** Text-Notizen per Android-Spracherkennung
     statt Overlay-Tastatur — in MR deutlich schneller als Tippen.
-15. **Palette-Langdruck = Tool-Optionen:** Langer Klick auf ein Palette-Tool
+15. **Palette-Langdruck = Tool-Optionen — UMGESETZT (2026-07-12):** Langer Klick auf ein Palette-Tool
     öffnet Mini-Optionen (Tür/Fenster-Modus, Ping-Host, Notiz-Typ) direkt an
     der Hand, ohne Hauptmenü.
 16. **Onboarding-Ablauf:** Beim ersten Start geführte Schritte (Boden
@@ -218,6 +236,25 @@ Foto-Notiz (neu).
     für Dokumentation direkt in den Export-Ordner.
 20. **Etagen-Stapel im Dashboard:** Web-Dashboard: 3D-Ansicht der extrudierten
     Räume aller Etagen übereinander (Daten sind im rooms-Paket schon da).
+
+## D) Gebäude-Dokumentation (später)
+
+21. **Elektro-/Medienplan per Wandplatzierung:** Mit dem Controllerstrahl auf
+    eine gezeichnete Wand zeigen und dort normgerechte beziehungsweise klar
+    unterscheidbare Symbole platzieren. Unterstützte Elemente:
+    * Steckdosen als 1-fach bis n-fach Mehrfachdose,
+    * Lichtschalter,
+    * Lampenauslässe,
+    * Datendosen (Netzwerk),
+    * Multimedia-/Koaxialdosen.
+
+    Jedes Element speichert Raum/Wandkante, Abstand entlang der Wand, Montagehöhe,
+    Typ, Anzahl und optionale Beschriftung. Es muss mit Session-Laden,
+    Scan-Ausrichtung, Etagen, Undo/Löschen und Web-Dashboard synchronisiert werden.
+    Der Export erzeugt zusätzlich einen eigenen
+    `<stem>_elektroplan[_<Etage>].svg`/PDF-tauglichen Plan mit Symbollegende;
+    der bestehende normale Grundriss bleibt unverändert und wird weiterhin
+    separat exportiert.
 
 ## Empfohlener Einstieg
 

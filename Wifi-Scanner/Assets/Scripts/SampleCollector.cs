@@ -42,6 +42,8 @@ namespace WifiScanner
         public ApLocator apLocator;
         [Tooltip("Optional: exports placed latency nodes (_ping.json).")]
         public PingTester pingTester;
+        [Tooltip("Optional: exports browser-assisted local throughput nodes.")]
+        public ThroughputTester throughputTester;
         [Tooltip("Optional: exports spatial notes (_notes.json).")]
         public SpatialNoteManager spatialNotes;
         [Tooltip("Optional: exports distance measurements (_measure.json).")]
@@ -182,6 +184,40 @@ namespace WifiScanner
                 streamer.Send(sample);
         }
 
+        /// <summary>
+        /// Records one multi-AP SCAN result (foreign BSSID) at the given head
+        /// position. Same pipeline as RecordSample — BSSID-exact folding,
+        /// registry, revision, streaming — but WITHOUT a point-cloud sphere
+        /// (handle −1): with a dozen visible networks the cloud would stack a
+        /// dozen spheres per spot; scan data feeds heatmaps/minimap/exports.
+        /// Ignored while not recording.
+        /// </summary>
+        public void AddScanSample(Vector3 pos, WifiInfo wifi)
+        {
+            if (!IsRecording || !wifi.valid || string.IsNullOrEmpty(wifi.bssid))
+                return;
+
+            int nearest = FindNearestWithin(pos, minPointSpacing, wifi.bssid);
+            if (nearest >= 0)
+            {
+                UpdateSample(nearest, wifi.rssiDbm);
+                return;
+            }
+
+            int floor = floorManager != null ? floorManager.RecordingFloor(pos.y) : 0;
+            var sample = Sample.Create(pos, wifi, floor);
+            int index = _samples.Count;
+            _samples.Add(sample);
+            _hitCounts.Add(1);
+            AddToGrid(index, pos);
+            RegisterBssid(in sample);
+            _renderHandles.Add(-1); // no cloud sphere for scan-derived points
+            DataRevision++;
+
+            if (streamer != null)
+                streamer.Send(sample);
+        }
+
         // Fold a new reading into an existing point as a running average and
         // recolour it. Not re-streamed, to avoid duplicates on the PC viewer.
         private void UpdateSample(int i, int newRssi)
@@ -296,9 +332,48 @@ namespace WifiScanner
             _hitCounts.Clear();
             _bssids.Clear();
             _bssidByKey.Clear();
+            _rssiWindow.Clear();
+            LastRssi = -127;
+            LastSsid = "";
+            LastBssid = "";
+            LastFrequency = 0;
+            _timeSinceLastEval = 0f;
             RecordingSeconds = 0f;
             DataRevision++;
             pointCloud?.Clear();
+        }
+
+        /// <summary>Starts from a genuinely blank in-memory survey while
+        /// preserving previously exported timestamped scans. The rolling
+        /// autosave is removed so a later app start cannot resurrect the old
+        /// session by mistake. Recording remains stopped; the UI decides when
+        /// to start the fresh scan.</summary>
+        public void ResetSession()
+        {
+            StopRecording();
+            ExclusiveTools.DeactivateOthers(null);
+
+            // Clear the live consumers first. Empty tool packets emitted below
+            // then become the new server snapshot for late browser clients.
+            streamer?.SendRaw("{\"type\":\"clear\",\"scope\":\"session\"}");
+
+            ClearAll();
+            floorManager?.LoadFloors(null);
+            floorHeatmap?.ResetForNewSession();
+            roomTracer?.ResetForNewSession();
+            drillPlanner?.ClearLines();
+            pingTester?.ClearNodes();
+            throughputTester?.ClearNodes();
+            spatialNotes?.ClearNotes();
+            distanceMeasurer?.ClearMeasurements();
+            roaming?.ClearEvents();
+            apLocator?.ClearEstimates();
+            wallLoss?.ResetForNewSession();
+            coverage?.ResetForNewSession();
+            UndoStack.Clear();
+            DataExporter.DeleteExportStem(ResumePrompt.AutosaveStem);
+
+            Debug.Log("[SampleCollector] Neue leere Survey-Session angelegt.");
         }
 
         /// <summary>
@@ -407,6 +482,8 @@ namespace WifiScanner
                 DataExporter.ExportRoamJson(roaming.Events, stem);
             if (pingTester != null && pingTester.Samples.Count > 0)
                 DataExporter.ExportPingJson(pingTester.Samples, stem);
+            if (throughputTester != null && throughputTester.Samples.Count > 0)
+                DataExporter.ExportThroughputJson(throughputTester.Samples, stem);
             if (spatialNotes != null && spatialNotes.Notes.Count > 0)
                 DataExporter.ExportNotesJson(spatialNotes.Notes, stem);
             if (distanceMeasurer != null && distanceMeasurer.Measurements.Count > 0)
@@ -470,8 +547,13 @@ namespace WifiScanner
                         combinedRooms, stem, combinedDrills);
             }
 
-            // Survey report LAST — it embeds the files written above.
-            ReportGenerator.Write(this, stem);
+            // Survey report LAST — it embeds the files written above. The
+            // rolling autosave only exists for session recovery; rebuilding a
+            // large self-contained HTML report every 30 seconds wastes I/O and
+            // can race with dashboard downloads.
+            if (!string.Equals(fixedName, "wifi_autosave",
+                    StringComparison.Ordinal))
+                ReportGenerator.Write(this, stem);
             return dir;
         }
 

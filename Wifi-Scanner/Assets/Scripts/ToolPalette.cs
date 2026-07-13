@@ -55,6 +55,10 @@ namespace WifiScanner
         private readonly List<Entry> _entries = new List<Entry>();
         private RectTransform _canvasRect;
         private TextMeshProUGUI _hint;
+        private GameObject _optionsRoot;
+        private LayoutElement _optionsLayout;
+        private IExclusiveTool _optionsTool;
+        private Image[] _optionImages;
         private Image _undoImage;
         private InputAction _posAction;
         private InputAction _rotAction;
@@ -133,6 +137,17 @@ namespace WifiScanner
             AddToolButton(gridGo.transform, "✕ Aus", null);
             AddUndoButton(gridGo.transform);
 
+            _optionsRoot = new GameObject("ToolOptions", typeof(RectTransform));
+            _optionsRoot.transform.SetParent(content.transform, false);
+            _optionsLayout = _optionsRoot.AddComponent<LayoutElement>();
+            var optionsColumn = _optionsRoot.AddComponent<VerticalLayoutGroup>();
+            optionsColumn.spacing = 6f;
+            optionsColumn.childControlWidth = true;
+            optionsColumn.childControlHeight = true;
+            optionsColumn.childForceExpandWidth = true;
+            optionsColumn.childForceExpandHeight = false;
+            _optionsRoot.SetActive(false);
+
             _hint = UiBuilder.AddText(content.transform, "", 16f,
                 FontStyles.Normal, TextAlignmentOptions.TopLeft);
             _hint.textWrappingMode = TextWrappingModes.Normal;
@@ -154,6 +169,7 @@ namespace WifiScanner
         {
             _posAction?.Disable();
             _rotAction?.Disable();
+            CloseToolOptions();
             XrUiHover.Clear(this);
         }
 
@@ -183,6 +199,7 @@ namespace WifiScanner
                 _undoImage.color = UndoStack.CanUndo
                     ? UiBuilder.ButtonColor
                     : new Color(0.12f, 0.13f, 0.17f, 1f); // dimmed: nothing to undo
+            RefreshOptionColors();
             if (_hint != null) _hint.text = BuildHint();
         }
 
@@ -200,18 +217,23 @@ namespace WifiScanner
             img.color = UiBuilder.ButtonColor;
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
-            if (tool != null)
-                btn.onClick.AddListener(() =>
+            // Button supplies normal hover/pressed visuals. Gesture dispatch is
+            // custom so a completed long press does not also click on release.
+            var press = go.AddComponent<PalettePressHandler>();
+            press.onShortPress = () =>
+            {
+                CloseToolOptions();
+                if (tool != null) tool.SetActive(!tool.IsActive);
+                else ExclusiveTools.DeactivateOthers(null);
+                Haptics.TickRight();
+            };
+            if (HasOptions(tool))
+                press.onLongPress = () =>
                 {
-                    tool.SetActive(!tool.IsActive);
-                    Haptics.TickRight();
-                });
-            else
-                btn.onClick.AddListener(() =>
-                {
-                    ExclusiveTools.DeactivateOthers(null);
-                    Haptics.TickRight();
-                });
+                    if (!tool.IsActive) tool.SetActive(true);
+                    ShowToolOptions(tool);
+                    Haptics.PlaceRight();
+                };
 
             var text = UiBuilder.AddText(go.transform, label, 18f,
                 FontStyles.Normal, TextAlignmentOptions.Center);
@@ -219,6 +241,78 @@ namespace WifiScanner
 
             if (tool != null)
                 _entries.Add(new Entry { tool = tool, image = img, deleteStyle = deleteStyle });
+        }
+
+        private bool HasOptions(IExclusiveTool tool) =>
+            tool != null && (ReferenceEquals(tool, openingTool) ||
+                             ReferenceEquals(tool, spatialNotes) ||
+                             ReferenceEquals(tool, pingTester));
+
+        private void ShowToolOptions(IExclusiveTool tool)
+        {
+            if (_optionsRoot == null) return;
+            ClearOptionChildren();
+            _optionsTool = tool;
+            _optionImages = null;
+            _optionsRoot.SetActive(true);
+            _optionsLayout.preferredHeight = 162f;
+            _canvasRect.sizeDelta = new Vector2(360f, 780f);
+
+            if (ReferenceEquals(tool, openingTool))
+            {
+                UiBuilder.AddHeader(_optionsRoot.transform, "Öffnung: Typ");
+                UiBuilder.AddButtonRow(_optionsRoot.transform, out _optionImages,
+                    ("Tür", () => { openingTool.SetDoorMode(true); RefreshOptionColors(); }),
+                    ("Fenster", () => { openingTool.SetDoorMode(false); RefreshOptionColors(); }));
+            }
+            else if (ReferenceEquals(tool, spatialNotes))
+            {
+                UiBuilder.AddHeader(_optionsRoot.transform, "Notiz: Typ");
+                UiBuilder.AddButtonRow(_optionsRoot.transform, out _optionImages,
+                    ("AP", () => { spatialNotes.SetActiveType(0); RefreshOptionColors(); }),
+                    ("Störung", () => { spatialNotes.SetActiveType(1); RefreshOptionColors(); }),
+                    ("Text", () => { spatialNotes.SetActiveType(2); RefreshOptionColors(); }));
+            }
+            else if (ReferenceEquals(tool, pingTester))
+            {
+                UiBuilder.AddHeader(_optionsRoot.transform, "Ping: Host");
+                UiBuilder.AddTextField(_optionsRoot.transform, "Host oder IP",
+                    pingTester.host, null, value => pingTester.SetHost(value));
+            }
+
+            UiBuilder.AddButtonRow(_optionsRoot.transform,
+                ("Optionen schließen", CloseToolOptions));
+            RefreshOptionColors();
+        }
+
+        private void RefreshOptionColors()
+        {
+            if (_optionImages == null || _optionsTool == null) return;
+            for (int i = 0; i < _optionImages.Length; i++)
+                _optionImages[i].color = UiBuilder.ButtonColor;
+            if (ReferenceEquals(_optionsTool, openingTool) && _optionImages.Length >= 2)
+                _optionImages[openingTool.IsDoorMode ? 0 : 1].color = UiBuilder.ActiveColor;
+            else if (ReferenceEquals(_optionsTool, spatialNotes) && _optionImages.Length >= 3)
+                _optionImages[Mathf.Clamp(spatialNotes.ActiveTypeIndex, 0, 2)].color =
+                    UiBuilder.ActiveColor;
+        }
+
+        private void CloseToolOptions()
+        {
+            if (_optionsRoot == null) return;
+            _optionsRoot.SetActive(false);
+            _optionsTool = null;
+            _optionImages = null;
+            ClearOptionChildren();
+            if (_canvasRect != null)
+                _canvasRect.sizeDelta = new Vector2(360f, 610f);
+        }
+
+        private void ClearOptionChildren()
+        {
+            if (_optionsRoot == null) return;
+            for (int i = _optionsRoot.transform.childCount - 1; i >= 0; i--)
+                Destroy(_optionsRoot.transform.GetChild(i).gameObject);
         }
 
         // Pops the global undo stack; dimmed while there is nothing to undo.
@@ -263,17 +357,19 @@ namespace WifiScanner
                        "bleiben stehen</color>";
             else if (spatialNotes != null && spatialNotes.IsActive)
                 hint = "<color=#00dcff>Notiz: Trigger=setzen am Controller, " +
-                       "A=Typ wechseln (Virtueller AP/Störquelle/Text)</color>";
+                       "A=Typ wechseln; Palettenknopf halten = Typ wählen</color>";
             else if (pingTester != null && pingTester.IsActive)
                 hint = "<color=#00dcff>Ping: Trigger=Knoten setzen & Latenz " +
-                       "messen</color>";
+                       "messen; Palettenknopf halten = Host ändern</color>";
             else if (openingTool != null && openingTool.IsActive)
                 hint = openingTool.IsDoorMode
                     ? "<color=#00dcff>Tür: Wand anvisieren, 1. Trigger = " +
                       "Anschlagseite (obere Ecke, dort ist das Scharnier), " +
-                      "2. Trigger = Breite (Höhe bis Boden). A=Fenster, B=zurück</color>"
+                      "2. Trigger = Breite (Höhe bis Boden). A=Fenster, " +
+                      "halten = Typ wählen, B=zurück</color>"
                     : "<color=#00dcff>Fenster: Wand anvisieren, 2× Trigger = " +
-                      "gegenüberliegende Ecken. A=Tür, B=zurück</color>";
+                      "gegenüberliegende Ecken. A=Tür, halten = Typ wählen, " +
+                      "B=zurück</color>";
             if (scanAligner != null && scanAligner.IsActive)
                 hint = scanAligner.CurrentPhase == ScanAligner.Phase.SelectWall
                     ? "<color=#00dcff>Ausrichten: Wand des geladenen Scans " +
@@ -288,6 +384,7 @@ namespace WifiScanner
                 ? $"\n↺ macht rückgängig: {UndoStack.TopLabel}"
                 : "";
             return "<color=#777777>Werkzeug antippen (rechter Strahl). " +
+                   "Öffnung/Notiz/Ping halten = Optionen. " +
                    $"A/B = Aufnahme/Export, solange kein Werkzeug aktiv.{undo}</color>";
         }
 

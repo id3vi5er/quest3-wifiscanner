@@ -227,6 +227,25 @@ namespace WifiScanner
             if (HasFix) SendApUpdate();
         }
 
+        public void ClearEstimates()
+        {
+            foreach (var kv in _visuals)
+            {
+                var v = kv.Value;
+                if (v.icon != null) Destroy(v.icon.gameObject);
+                if (v.label != null) Destroy(v.label.gameObject);
+                if (v.ring != null) Destroy(v.ring.gameObject);
+            }
+            _visuals.Clear();
+            _estimates.Clear();
+            _bssidFilter = "";
+            _dirty = false;
+            _refitTimer = 0f;
+            _resendTimer = 0f;
+            // A full dashboard "clear" packet removes the previous apfix
+            // snapshot; no invalid legacy single-AP packet is necessary.
+        }
+
         private void Update()
         {
             if (collector == null) return;

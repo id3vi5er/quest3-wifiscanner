@@ -88,6 +88,19 @@ namespace WifiScanner
             if (_root != null) _root.SetActive(visible);
         }
 
+        public void ClearEvents()
+        {
+            _events.Clear();
+            _lastBssid = "";
+            _lastFrequency = 0;
+            _resendTimer = 0f;
+            _labels.Clear();
+            if (_root != null)
+                for (int i = _root.transform.childCount - 1; i >= 0; i--)
+                    Destroy(_root.transform.GetChild(i).gameObject);
+            SendRoamUpdate();
+        }
+
         private void Update()
         {
             if (collector == null) return;

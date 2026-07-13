@@ -297,7 +297,7 @@ MonoBehaviour:
   targetDevices:
   - visibleName: Quest
     manifestName: quest
-    enabled: 1
+    enabled: 0
   - visibleName: Quest 2
     manifestName: quest2
     enabled: 1
@@ -1665,7 +1665,7 @@ MonoBehaviour:
   targetOpenXRApiVersion: 
   required: 0
   customRuntimeLoaderName: 
-  targetQuest: 1
+  targetQuest: 0
   targetQuest2: 1
 --- !u!114 &3598254934845347770
 MonoBehaviour:

@@ -229,6 +229,27 @@ namespace WifiScanner
                 sb.AppendLine("</table>");
             }
 
+            // ---- Local browser-assisted throughput nodes ----
+            var throughput = collector.throughputTester;
+            if (throughput != null && throughput.NodeCount > 0)
+            {
+                sb.AppendLine("<h2>Lokaler WLAN-Durchsatz</h2><table>");
+                sb.AppendLine("<tr><th>#</th><th>Quest → Browser</th>" +
+                              "<th>Browser → Quest</th><th>Latenz</th>" +
+                              "<th>Band</th><th>Position (m)</th></tr>");
+                int i = 1;
+                foreach (var n in throughput.Samples)
+                    sb.Append("<tr><td>").Append(i++)
+                      .Append("</td><td>").Append($"{n.questToBrowserMbps:F1} Mbit/s")
+                      .Append("</td><td>").Append($"{n.browserToQuestMbps:F1} Mbit/s")
+                      .Append("</td><td>").Append($"{n.latencyMs:F0} ms")
+                      .Append("</td><td>").Append(Sample.BandLabel(n.frequencyMhz))
+                      .Append("</td><td>")
+                      .Append(Fmt(new Vector3(n.posX, n.posY, n.posZ)))
+                      .AppendLine("</td></tr>");
+                sb.AppendLine("</table>");
+            }
+
             // ---- Measurements ----
             var measurer = collector.distanceMeasurer;
             if (measurer != null && measurer.Measurements.Count > 0)

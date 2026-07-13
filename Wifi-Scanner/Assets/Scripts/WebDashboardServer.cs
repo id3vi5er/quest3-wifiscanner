@@ -8,6 +8,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Globalization;
 using UnityEngine;
 
 namespace WifiScanner
@@ -22,7 +23,7 @@ namespace WifiScanner
     ///
     /// It also lets you download the recorded scan files (persistentDataPath):
     ///   GET /scans        -> JSON list of export files
-    ///   GET /download?f=  -> one file (attachment)
+    ///   GET /download?f=  -> one file (reports open inline)
     ///   GET /download-all -> all export files zipped
     ///   GET /export       -> trigger a fresh export (runs on the main thread)
     ///
@@ -36,6 +37,8 @@ namespace WifiScanner
         public bool runAtStart = true;
         [Tooltip("Optional: lets the dashboard trigger a fresh export.")]
         public SampleCollector collector;
+        [Tooltip("Stores spatial results of browser-assisted local throughput tests.")]
+        public ThroughputTester throughput;
         [Tooltip("Newest samples kept for late-joining clients.")]
         public int maxSnapshotSamples = 8000;
 
@@ -63,9 +66,37 @@ namespace WifiScanner
         private readonly List<string> _samples = new List<string>();
         private readonly object _stateLock = new object();
         private readonly Queue<Action> _mainThread = new Queue<Action>();
+        private readonly object _speedLock = new object();
+        private readonly Dictionary<string, SpeedSession> _speedSessions =
+            new Dictionary<string, SpeedSession>();
+        private string _pendingSpeedRequest;
+        private long _pendingSpeedRequestMs;
+        private Vector3 _latestPose;
+        private bool _hasLatestPose;
+        private static readonly byte[] SpeedChunk = new byte[64 * 1024];
+
+        private class SpeedSession
+        {
+            public Vector3 pos;
+            public long createdMs;
+            public string client;
+        }
+
+        [Serializable]
+        private class SpeedResultRequest
+        {
+            public string id;
+            public float questToBrowserMbps;
+            public float browserToQuestMbps;
+            public float latencyMs;
+        }
 
         /// <summary>Best-guess dashboard URL on the local network.</summary>
         public string Url => $"http://{LocalIPv4()}:{port}";
+        public bool BrowserThroughputTestActive
+        {
+            get { lock (_speedLock) return _speedSessions.Count > 0; }
+        }
 
         private void Start()
         {
@@ -138,11 +169,36 @@ namespace WifiScanner
         {
             if (!_running || string.IsNullOrEmpty(json)) return;
 
+            if (ExtractType(json) == "pose" &&
+                TryExtractFloat(json, "posX", out float px) &&
+                TryExtractFloat(json, "posY", out float py) &&
+                TryExtractFloat(json, "posZ", out float pz))
+            {
+                lock (_speedLock)
+                {
+                    _latestPose = new Vector3(px, py, pz);
+                    _hasLatestPose = true;
+                }
+            }
+
             // Remember state so a late-joining browser gets the full picture.
             lock (_stateLock)
             {
                 string type = ExtractType(json);
-                if (type == null)
+                if (type == "clear")
+                {
+                    // A new survey is a hard snapshot boundary: no late browser
+                    // may receive rooms/AP/tool state from the previous session.
+                    _samples.Clear();
+                    _lastByType.Clear();
+                    _lastByType[type] = json;
+                    lock (_speedLock)
+                    {
+                        _speedSessions.Clear();
+                        _pendingSpeedRequest = null;
+                    }
+                }
+                else if (type == null)
                 {
                     _samples.Add(json);
                     if (_samples.Count > maxSnapshotSamples)
@@ -151,7 +207,6 @@ namespace WifiScanner
                 else
                 {
                     _lastByType[type] = json;
-                    if (type == "clear") _samples.Clear();
                 }
             }
 
@@ -159,9 +214,10 @@ namespace WifiScanner
             SendFrameToAll(frame);
         }
 
-        private void SendFrameToAll(byte[] frame)
+        private int SendFrameToAll(byte[] frame)
         {
             List<Client> dead = null;
+            int sent = 0;
             lock (_clients)
             {
                 foreach (var c in _clients)
@@ -169,6 +225,7 @@ namespace WifiScanner
                     try
                     {
                         lock (c.sendLock) c.stream.Write(frame, 0, frame.Length);
+                        sent++;
                     }
                     catch
                     {
@@ -177,6 +234,30 @@ namespace WifiScanner
                 }
                 if (dead != null) foreach (var c in dead) _clients.Remove(c);
             }
+            return sent;
+        }
+
+        /// <summary>Asks an already open dashboard to run the local throughput
+        /// benchmark. The browser remains the traffic peer, while the action
+        /// can be initiated from inside the Quest.</summary>
+        public bool RequestBrowserThroughputTest()
+        {
+            lock (_clients)
+                if (_clients.Count == 0) return false;
+
+            string requestId = Guid.NewGuid().ToString("N");
+            lock (_speedLock)
+            {
+                _pendingSpeedRequest = requestId;
+                _pendingSpeedRequestMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            }
+            byte[] frame = BuildTextFrame($"{{\"type\":\"speed_request\"," +
+                                          $"\"requestId\":\"{requestId}\"}}");
+            if (SendFrameToAll(frame) > 0) return true;
+
+            lock (_speedLock)
+                if (_pendingSpeedRequest == requestId) _pendingSpeedRequest = null;
+            return false;
         }
 
         // ---- Connection handling ----
@@ -218,7 +299,7 @@ namespace WifiScanner
                     return;
                 }
 
-                RouteHttp(stream, method, path, query);
+                RouteHttp(stream, method, path, query, headers);
                 tcp.Close();
             }
             catch (Exception e)
@@ -229,11 +310,13 @@ namespace WifiScanner
         }
 
         private void RouteHttp(NetworkStream stream, string method, string path,
-            string query)
+            string query, Dictionary<string, string> headers)
         {
             if (path == "/" || path == "/index.html")
                 WriteHttp(stream, "200 OK", "text/html; charset=utf-8",
-                    Encoding.UTF8.GetBytes(WebDashboardPage.Html));
+                    Encoding.UTF8.GetBytes(WebDashboardPage.Html),
+                    "Cache-Control: no-store, no-cache, must-revalidate\r\n" +
+                    "Pragma: no-cache\r\n");
             else if (path == "/scans")
                 WriteHttp(stream, "200 OK", "application/json",
                     Encoding.UTF8.GetBytes(ScanListJson()));
@@ -243,9 +326,203 @@ namespace WifiScanner
                 ServeZip(stream);
             else if (path == "/export")
                 ServeExport(stream);
+            else if (path == "/speed/start" && method == "POST")
+                ServeSpeedStart(stream, query, headers);
+            else if (path == "/speed/ping")
+                WriteHttp(stream, "200 OK", "application/octet-stream",
+                    Array.Empty<byte>(), "Cache-Control: no-store\r\n");
+            else if (path == "/speed/down")
+                ServeSpeedDownload(stream, query);
+            else if (path == "/speed/up" && method == "POST")
+                ServeSpeedUpload(stream, query, headers);
+            else if (path == "/speed/result" && method == "POST")
+                ServeSpeedResult(stream, headers);
             else
                 WriteHttp(stream, "404 Not Found", "text/plain",
                     Encoding.UTF8.GetBytes("not found"));
+        }
+
+        // ---- Browser-assisted local throughput test ----
+
+        private void ServeSpeedStart(NetworkStream stream, string query,
+            Dictionary<string, string> headers)
+        {
+            string requested = QueryValue(query, "request");
+            if (!string.IsNullOrEmpty(requested))
+            {
+                bool claimed;
+                lock (_speedLock)
+                {
+                    long age = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() -
+                               _pendingSpeedRequestMs;
+                    claimed = requested == _pendingSpeedRequest && age <= 15000;
+                    if (claimed) _pendingSpeedRequest = null;
+                }
+                if (!claimed)
+                {
+                    WriteHttp(stream, "409 Conflict", "text/plain",
+                        Bytes("test claimed by another dashboard"));
+                    return;
+                }
+            }
+
+            string id = Guid.NewGuid().ToString("N");
+            Vector3 pos;
+            bool hasPose;
+            lock (_speedLock)
+            {
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var expired = new List<string>();
+                foreach (var kv in _speedSessions)
+                    if (now - kv.Value.createdMs > 120000) expired.Add(kv.Key);
+                foreach (string key in expired) _speedSessions.Remove(key);
+                // One intentional local benchmark at a time; a new start
+                // invalidates abandoned tabs and bounds resource use.
+                _speedSessions.Clear();
+                hasPose = _hasLatestPose;
+                pos = _latestPose;
+                headers.TryGetValue("user-agent", out string client);
+                if (client != null && client.Length > 80) client = client.Substring(0, 80);
+                _speedSessions[id] = new SpeedSession
+                    { pos = pos, createdMs = now, client = client ?? "Browser" };
+            }
+            if (!hasPose)
+            {
+                lock (_speedLock) _speedSessions.Remove(id);
+                WriteHttp(stream, "503 Service Unavailable", "text/plain",
+                    Bytes("pose not ready"));
+                return;
+            }
+            WriteHttp(stream, "200 OK", "application/json",
+                Bytes($"{{\"id\":\"{id}\"}}"), "Cache-Control: no-store\r\n");
+        }
+
+        private void ServeSpeedDownload(NetworkStream stream, string query)
+        {
+            if (!ValidSpeedSession(query))
+            {
+                WriteHttp(stream, "404 Not Found", "text/plain", Bytes("expired test"));
+                return;
+            }
+            int bytes = QueryInt(query, "bytes", 4 * 1024 * 1024,
+                64 * 1024, 16 * 1024 * 1024);
+            WriteHttpHeader(stream, "200 OK", "application/octet-stream", bytes,
+                "Cache-Control: no-store\r\n");
+            int left = bytes;
+            while (left > 0)
+            {
+                int n = Math.Min(left, SpeedChunk.Length);
+                stream.Write(SpeedChunk, 0, n);
+                left -= n;
+            }
+        }
+
+        private void ServeSpeedUpload(NetworkStream stream, string query,
+            Dictionary<string, string> headers)
+        {
+            if (!ValidSpeedSession(query))
+            {
+                WriteHttp(stream, "404 Not Found", "text/plain", Bytes("expired test"));
+                return;
+            }
+            if (!TryContentLength(headers, out int length) ||
+                length < 0 || length > 16 * 1024 * 1024)
+            {
+                WriteHttp(stream, "413 Payload Too Large", "text/plain",
+                    Bytes("bad size"));
+                return;
+            }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int received = DrainBody(stream, length);
+            sw.Stop();
+            string json = $"{{\"bytes\":{received},\"serverMs\":{sw.Elapsed.TotalMilliseconds.ToString("F2", CultureInfo.InvariantCulture)}}}";
+            WriteHttp(stream, "200 OK", "application/json", Bytes(json),
+                "Cache-Control: no-store\r\n");
+        }
+
+        private bool ValidSpeedSession(string query)
+        {
+            string id = QueryValue(query, "id");
+            if (string.IsNullOrEmpty(id)) return false;
+            lock (_speedLock) return _speedSessions.ContainsKey(id);
+        }
+
+        private void ServeSpeedResult(NetworkStream stream,
+            Dictionary<string, string> headers)
+        {
+            if (!TryContentLength(headers, out int length) || length <= 0 || length > 4096)
+            {
+                WriteHttp(stream, "400 Bad Request", "text/plain", Bytes("bad result"));
+                return;
+            }
+            byte[] body = ReadBody(stream, length);
+            SpeedResultRequest result = null;
+            try { result = JsonUtility.FromJson<SpeedResultRequest>(Encoding.UTF8.GetString(body)); }
+            catch { }
+            SpeedSession session = null;
+            if (result != null && !string.IsNullOrEmpty(result.id))
+                lock (_speedLock)
+                {
+                    if (_speedSessions.TryGetValue(result.id, out session))
+                        _speedSessions.Remove(result.id);
+                }
+            if (session == null)
+            {
+                WriteHttp(stream, "404 Not Found", "text/plain", Bytes("expired test"));
+                return;
+            }
+            if (!ValidMetric(result.questToBrowserMbps, 10000f) ||
+                !ValidMetric(result.browserToQuestMbps, 10000f) ||
+                !ValidMetric(result.latencyMs, 60000f))
+            {
+                WriteHttp(stream, "400 Bad Request", "text/plain", Bytes("bad metrics"));
+                return;
+            }
+            if (throughput != null)
+                lock (_mainThread) _mainThread.Enqueue(() => throughput.AddResult(
+                    session.pos, result.questToBrowserMbps,
+                    result.browserToQuestMbps, result.latencyMs, session.client));
+            WriteHttp(stream, "200 OK", "application/json", Bytes("{\"ok\":true}"));
+        }
+
+        private static bool ValidMetric(float value, float max) =>
+            !float.IsNaN(value) && !float.IsInfinity(value) &&
+            value >= 0f && value <= max;
+
+        private static bool TryContentLength(Dictionary<string, string> headers,
+            out int length)
+        {
+            length = 0;
+            return headers.TryGetValue("content-length", out string raw) &&
+                   int.TryParse(raw, out length);
+        }
+
+        private static int DrainBody(NetworkStream stream, int length)
+        {
+            byte[] buf = new byte[64 * 1024];
+            int total = 0;
+            while (total < length)
+            {
+                int n = stream.Read(buf, 0, Math.Min(buf.Length, length - total));
+                if (n <= 0) break;
+                total += n;
+            }
+            return total;
+        }
+
+        private static byte[] ReadBody(NetworkStream stream, int length)
+        {
+            byte[] body = new byte[length];
+            int offset = 0;
+            while (offset < length)
+            {
+                int n = stream.Read(body, offset, length - offset);
+                if (n <= 0) break;
+                offset += n;
+            }
+            if (offset == length) return body;
+            Array.Resize(ref body, offset);
+            return body;
         }
 
         // ---- Scan downloads ----
@@ -260,7 +537,12 @@ namespace WifiScanner
                 if (!first) sb.Append(',');
                 first = false;
                 sb.Append("{\"name\":\"").Append(Escape(fi.Name))
-                  .Append("\",\"size\":").Append(fi.Length).Append('}');
+                  .Append("\",\"size\":").Append(fi.Length)
+                  .Append(",\"modified\":")
+                  .Append((long)(fi.LastWriteTimeUtc -
+                      new DateTime(1970, 1, 1, 0, 0, 0,
+                          DateTimeKind.Utc)).TotalMilliseconds)
+                  .Append('}');
             }
             return sb.Append("]}").ToString();
         }
@@ -278,8 +560,10 @@ namespace WifiScanner
             { WriteHttp(stream, "404 Not Found", "text/plain", Bytes("no file")); return; }
 
             byte[] data = File.ReadAllBytes(full);
+            string disposition = Path.GetExtension(name).Equals(".html",
+                StringComparison.OrdinalIgnoreCase) ? "inline" : "attachment";
             WriteHttp(stream, "200 OK", ContentType(name), data,
-                $"Content-Disposition: attachment; filename=\"{name}\"\r\n");
+                $"Content-Disposition: {disposition}; filename=\"{name}\"\r\n");
         }
 
         private void ServeZip(NetworkStream stream)
@@ -322,7 +606,7 @@ namespace WifiScanner
         {
             string ext = Path.GetExtension(name).ToLowerInvariant();
             return ext == ".csv" || ext == ".json" || ext == ".png" ||
-                   ext == ".svg" || ext == ".obj";
+                   ext == ".svg" || ext == ".obj" || ext == ".html";
         }
 
         // ---- WebSocket plumbing ----
@@ -494,13 +778,19 @@ namespace WifiScanner
         private static void WriteHttp(NetworkStream stream, string status,
             string contentType, byte[] body, string extraHeaders = "")
         {
+            WriteHttpHeader(stream, status, contentType, body.Length, extraHeaders);
+            if (body.Length > 0) stream.Write(body, 0, body.Length);
+        }
+
+        private static void WriteHttpHeader(NetworkStream stream, string status,
+            string contentType, int contentLength, string extraHeaders = "")
+        {
             string head = $"HTTP/1.1 {status}\r\nContent-Type: {contentType}\r\n" +
-                          $"Content-Length: {body.Length}\r\n" +
+                          $"Content-Length: {contentLength}\r\n" +
                           "Access-Control-Allow-Origin: *\r\n" +
                           extraHeaders + "Connection: close\r\n\r\n";
             byte[] h = Encoding.ASCII.GetBytes(head);
             stream.Write(h, 0, h.Length);
-            if (body.Length > 0) stream.Write(body, 0, body.Length);
         }
 
         private static byte[] Bytes(string s) => Encoding.UTF8.GetBytes(s);
@@ -514,6 +804,7 @@ namespace WifiScanner
                 case ".png": return "image/png";
                 case ".svg": return "image/svg+xml";
                 case ".obj": return "text/plain";
+                case ".html": return "text/html; charset=utf-8";
                 case ".zip": return "application/zip";
                 default: return "application/octet-stream";
             }
@@ -531,6 +822,14 @@ namespace WifiScanner
             return null;
         }
 
+        private static int QueryInt(string query, string key, int fallback,
+            int min, int max)
+        {
+            string raw = QueryValue(query, key);
+            return int.TryParse(raw, out int value)
+                ? Math.Max(min, Math.Min(max, value)) : fallback;
+        }
+
         // Cheap "type" extraction without a JSON parser: finds "type":"<value>".
         private static string ExtractType(string json)
         {
@@ -540,6 +839,20 @@ namespace WifiScanner
             i += tag.Length;
             int e = json.IndexOf('"', i);
             return e > i ? json.Substring(i, e - i) : null;
+        }
+
+        private static bool TryExtractFloat(string json, string key, out float value)
+        {
+            value = 0f;
+            string tag = "\"" + key + "\":";
+            int i = json.IndexOf(tag, StringComparison.Ordinal);
+            if (i < 0) return false;
+            i += tag.Length;
+            int e = i;
+            while (e < json.Length && (char.IsDigit(json[e]) || json[e] == '-' ||
+                   json[e] == '+' || json[e] == '.' || json[e] == 'e' || json[e] == 'E')) e++;
+            return float.TryParse(json.Substring(i, e - i), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out value);
         }
 
         private static string Escape(string s) =>

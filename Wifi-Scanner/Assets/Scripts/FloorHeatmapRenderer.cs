@@ -201,6 +201,25 @@ namespace WifiScanner
             _timer = updateInterval;
         }
 
+        /// <summary>Clears calibration, filters, diff data and cached geometry
+        /// for a genuinely blank survey session.</summary>
+        public void ResetForNewSession()
+        {
+            StopAllCoroutines();
+            _rebuilding = false;
+            _hasFloorOverride = false;
+            _floorOverrideY = 0f;
+            gridYawDegrees = 0f;
+            _bssidFilter = "";
+            _diffSamples = null;
+            DiffStem = "";
+            _refCellRssi = null;
+            _cellRssi = null;
+            _lastRevision = -1;
+            _timer = updateInterval;
+            if (_quadGo != null) _quadGo.SetActive(false);
+        }
+
         /// <summary>Best known floor height: manual override, else the
         /// floor-based tracking origin. False if neither exists (Editor).</summary>
         public bool TryGetFloorY(out float y)
@@ -760,6 +779,9 @@ namespace WifiScanner
                 int activeFloor = floorManager != null ? floorManager.ActiveIndex : 0;
                 for (int i = 0; i < bssids.Count; i++)
                 {
+                    // Sparse neighbour networks (multi-AP scan) produce
+                    // meaningless maps — only export densely measured APs.
+                    if (bssids[i].sampleCount < 30) continue;
                     var result = new FieldResult();
                     var pass = ComputeField(collector.Samples,
                         floorManager != null, activeFloor, result, bssids[i].bssid);

@@ -27,6 +27,7 @@ namespace WifiScanner
         public NetworkStreamer streamer;      // optional (re-stream after load)
         public DrillPlanner drillPlanner;     // optional
         public PingTester pingTester;         // optional
+        public ThroughputTester throughputTester; // optional
         public SpatialNoteManager spatialNotes;   // optional
         public DistanceMeasurer distanceMeasurer; // optional
 
@@ -85,6 +86,9 @@ namespace WifiScanner
 
             ExclusiveTools.DeactivateOthers(null); // release whichever tool is active
             collector.StopRecording();
+            // Hard boundary BEFORE sidecars are loaded: their Load APIs emit
+            // the fresh rooms/tool packets that must survive the reset.
+            streamer?.SendRaw("{\"type\":\"clear\",\"scope\":\"session\"}");
 
             // Guard against files whose floor indices exceed the floor list.
             int floorCount = floors != null ? floors.Count : 1;
@@ -122,6 +126,9 @@ namespace WifiScanner
             if (pingTester != null)
                 pingTester.LoadNodes(
                     DataExporter.TryLoadPing(stem, out var pings) ? pings : null);
+            if (throughputTester != null)
+                throughputTester.LoadNodes(
+                    DataExporter.TryLoadThroughput(stem, out var speeds) ? speeds : null);
             if (spatialNotes != null)
                 spatialNotes.LoadNotes(
                     DataExporter.TryLoadNotes(stem, out var notes) ? notes : null);
@@ -150,6 +157,7 @@ namespace WifiScanner
         public void ApplySessionTransform(float deltaYawDegrees, Vector3 t)
         {
             if (collector == null) return;
+            streamer?.SendRaw("{\"type\":\"clear\",\"scope\":\"session\"}");
             Quaternion r = Quaternion.Euler(0f, deltaYawDegrees, 0f);
 
             var moved = new List<Sample>(collector.Samples.Count);
@@ -220,6 +228,26 @@ namespace WifiScanner
                 pingTester.LoadNodes(nodes);
             }
 
+            if (throughputTester != null && throughputTester.NodeCount > 0)
+            {
+                var nodes = new List<ThroughputSample>(throughputTester.NodeCount);
+                foreach (var n in throughputTester.Samples)
+                {
+                    Vector3 p = r * new Vector3(n.posX, n.posY, n.posZ) + t;
+                    nodes.Add(new ThroughputSample
+                    {
+                        timestampMs = n.timestampMs,
+                        posX = p.x, posY = p.y, posZ = p.z, floor = n.floor,
+                        questToBrowserMbps = n.questToBrowserMbps,
+                        browserToQuestMbps = n.browserToQuestMbps,
+                        latencyMs = n.latencyMs, client = n.client,
+                        ssid = n.ssid, bssid = n.bssid,
+                        frequencyMhz = n.frequencyMhz,
+                    });
+                }
+                throughputTester.LoadNodes(nodes);
+            }
+
             if (spatialNotes != null && spatialNotes.Notes.Count > 0)
             {
                 var notes = new List<SpatialNote>(spatialNotes.Notes.Count);
@@ -268,9 +296,9 @@ namespace WifiScanner
                       $"dXZ ({t.x:F2}, {t.z:F2}) m, dY {t.y:F2} m.");
         }
 
-        // Pushes the freshly loaded/transformed samples to the PC viewer and
-        // the web dashboard. "clear" first so the dashboard snapshot resets
-        // (receiver.py ignores unknown packet types).
+        // Pushes freshly loaded/transformed samples after the caller already
+        // emitted the hard clear and the individual Load APIs broadcast their
+        // new sidecar state.
         private void RestartRestream()
         {
             if (streamer == null) return;
@@ -280,7 +308,6 @@ namespace WifiScanner
 
         private IEnumerator Restream()
         {
-            streamer.SendRaw("{\"type\":\"clear\"}");
             var samples = collector.Samples;
             for (int i = 0; i < samples.Count; i++)
             {

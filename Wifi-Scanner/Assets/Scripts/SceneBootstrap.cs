@@ -39,6 +39,9 @@ namespace WifiScanner
         public bool enableResumePrompt = true;
         [Tooltip("First-run tutorial card (re-runnable via System tab).")]
         public bool enableOnboarding = true;
+        [Tooltip("Scan ALL visible networks while recording (per-BSSID " +
+                 "heatmaps for neighbours too). Toggleable in the panel.")]
+        public bool enableMultiApScan = true;
         [Tooltip("A = pause/resume recording, B = export (right controller).")]
         public bool enableControllerControls = true;
         [Tooltip("Clickable tool palette on the left wrist (replaces the old " +
@@ -374,6 +377,21 @@ namespace WifiScanner
                 _collector.pingTester = pingTester;
             }
 
+            // --- Browser-assisted local throughput nodes (no receiver.py) ---
+            ThroughputTester throughputTester = null;
+            if (webServer != null)
+            {
+                throughputTester = gameObject.AddComponent<ThroughputTester>();
+                throughputTester.visualMaterial = pointMaterialOverride;
+                throughputTester.streamer = streamer;
+                throughputTester.floorManager = floorManager;
+                throughputTester.collector = _collector;
+                webServer.throughput = throughputTester;
+                _collector.throughputTester = throughputTester;
+                if (floorManager != null)
+                    floorManager.FloorInserted += throughputTester.OnFloorInserted;
+            }
+
             // --- Spatial notes (controller-anchored) ---
             SpatialNoteManager spatialNotes = null;
             if (enableSpatialNotes)
@@ -407,6 +425,7 @@ namespace WifiScanner
             sessionLoader.streamer = streamer;
             sessionLoader.drillPlanner = drill;
             sessionLoader.pingTester = pingTester;
+            sessionLoader.throughputTester = throughputTester;
             sessionLoader.spatialNotes = spatialNotes;
             sessionLoader.distanceMeasurer = distanceMeasurer;
 
@@ -440,7 +459,16 @@ namespace WifiScanner
             {
                 deleter.distanceMeasurer = distanceMeasurer;
                 deleter.pingTester = pingTester;
+                deleter.throughputTester = throughputTester;
                 deleter.spatialNotes = spatialNotes;
+            }
+
+            // --- Multi-AP scanning (all visible networks -> sample pipeline) ---
+            MultiApScanner multiAp = null;
+            if (enableMultiApScan)
+            {
+                multiAp = gameObject.AddComponent<MultiApScanner>();
+                multiAp.collector = _collector;
             }
 
             // --- Roaming tracker (marks BSSID switches in the room) ---
@@ -523,6 +551,8 @@ namespace WifiScanner
                 panel.coverage = coverage;
                 panel.onboarding = onboarding;
                 panel.roaming = roaming;
+                panel.multiAp = multiAp;
+                panel.throughputTester = throughputTester;
             }
 
             Debug.Log("[SceneBootstrap] WiFi scanner initialised " +
@@ -531,11 +561,36 @@ namespace WifiScanner
 
         private void Start()
         {
+            ApplyAndroidTaskLabel();
             if (autoStartRecording)
             {
                 _collector.StartRecording();
                 Debug.Log("[SceneBootstrap] Recording started.");
             }
+        }
+
+        private static void ApplyAndroidTaskLabel()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using var unityPlayer = new AndroidJavaClass(
+                    "com.unity3d.player.UnityPlayer");
+                using var activity = unityPlayer.GetStatic<AndroidJavaObject>(
+                    "currentActivity");
+                using var description = new AndroidJavaObject(
+                    "android.app.ActivityManager$TaskDescription",
+                    Application.productName);
+                activity.Call("setTaskDescription", description);
+                Debug.Log($"[SceneBootstrap] Android task label -> " +
+                          $"'{Application.productName}'.");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[SceneBootstrap] Task-Label konnte nicht " +
+                                 $"gesetzt werden: {e.Message}");
+            }
+#endif
         }
 
         private static Material CreatePointMaterial()
@@ -572,7 +627,14 @@ namespace WifiScanner
 
         private void OnApplicationPause(bool paused)
         {
-            if (paused) FinalExport();
+            if (paused)
+            {
+                // Horizon OS displays ActivityManager.TaskDescription in the
+                // minimized/running-app card. Unity's GameActivity leaves its
+                // label null even with correct manifest labels.
+                ApplyAndroidTaskLabel();
+                FinalExport();
+            }
         }
 
         private void OnApplicationQuit() => FinalExport();

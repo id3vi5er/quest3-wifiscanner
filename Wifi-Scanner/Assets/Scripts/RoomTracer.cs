@@ -935,6 +935,28 @@ namespace WifiScanner
             SendRoomsUpdate();
         }
 
+        /// <summary>Clears geometry plus transient drawing/calibration state and
+        /// adopts the freshly reset storey's tracked floor.</summary>
+        public void ResetForNewSession()
+        {
+            ClearRooms();
+            _drag = DragMode.None;
+            _dragRoom = _dragCorner = -1;
+            IsCalibratingFloor = false;
+            IsNamingRoom = false;
+            _nameKeyboard = null;
+            _namingVisual = null;
+            _hasFloor = false;
+            if (floorManager != null && floorManager.Floors.Count > 0)
+            {
+                _floorY = floorManager.ActiveBaseY;
+                _hasFloor = true;
+            }
+            else
+                ResolveFloor();
+            RefreshCursorVisible();
+        }
+
         /// <summary>Pushes the current floor plan to the PC viewer (UDP).</summary>
         private void SendRoomsUpdate()
         {

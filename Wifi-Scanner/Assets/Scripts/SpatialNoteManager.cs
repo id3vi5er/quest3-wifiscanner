@@ -40,6 +40,8 @@ namespace WifiScanner
 
         public bool IsActive { get; private set; }
         public IReadOnlyList<SpatialNote> Notes => _notes;
+        public int ActiveTypeIndex => (int)_activeType;
+        public string ActiveTypeLabel => LabelFor(_activeType);
 
         private class NoteVisual
         {
@@ -144,6 +146,15 @@ namespace WifiScanner
 
         public void ToggleActive() => SetActive(!IsActive);
 
+        /// <summary>Selects Virtual AP / interference / text from the wrist
+        /// palette without exposing the private serialized note enum.</summary>
+        public void SetActiveType(int index)
+        {
+            _activeType = (NoteType)Mathf.Clamp(index, 0, 2);
+            if (_cursorRenderer != null)
+                SetCursorMat(MaterialFor(_activeType));
+        }
+
         public void SetActive(bool active)
         {
             if (IsActive == active) return;
@@ -194,7 +205,7 @@ namespace WifiScanner
 
             if (_cycleAction.WasPressedThisFrame())
             {
-                _activeType = (NoteType)(((int)_activeType + 1) % 3);
+                SetActiveType(((int)_activeType + 1) % 3);
                 Haptics.TickRight();
             }
 

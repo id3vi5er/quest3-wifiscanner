@@ -137,6 +137,17 @@ namespace WifiScanner
         public void ToggleActive() => SetActive(!IsActive);
         public bool IsDoorMode => _isDoor;
 
+        /// <summary>Sets the palette-selectable opening type and cancels a
+        /// half-finished opening so its two corners cannot mix modes.</summary>
+        public void SetDoorMode(bool door)
+        {
+            if (_isDoor == door) return;
+            _isDoor = door;
+            _placing = false;
+            if (_preview != null) _preview.enabled = false;
+            if (_hingeMarker != null) _hingeMarker.gameObject.SetActive(false);
+        }
+
         public void SetActive(bool active)
         {
             if (IsActive == active) return;
@@ -157,7 +168,7 @@ namespace WifiScanner
 
             bool ui = ControlPanel.PointerOverPanel;
             if (!ui && _typeAction.WasPressedThisFrame())
-                _isDoor = !_isDoor;
+                SetDoorMode(!_isDoor);
             if (!ui && _removeAction.WasPressedThisFrame())
             {
                 if (roomTracer != null) roomTracer.RemoveLastOpening();
