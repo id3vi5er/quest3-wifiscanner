@@ -340,7 +340,19 @@ Das Dashboard zeigt live:
 - Notizen
 - Etagenfilter
 
-![Webinterface Screenshot](assets/Screenshot-Webinterface.png)
+### Dashboard-Ansichten
+
+**Interpolierte WiFi-Heatmap mit Grundriss, Laufpfad und Durchsatzmesspunkten**
+
+![Web-Dashboard: Heatmap-Ansicht](assets/Screenshot-Webinterface_Heatmap.png)
+
+**Einzelne RSSI-Messpunkte und aufgezeichneter Laufpfad**
+
+![Web-Dashboard: Messpunkt-Ansicht](assets/Screenshot-Webinterface_Points.png)
+
+**Interaktive 3D-Raumansicht mit Etagen und raeumlicher Punktwolke**
+
+![Web-Dashboard: 3D-Ansicht](assets/Screenshot-Webinterface_3D.png)
 
 Zusaetzlich bietet es:
 
