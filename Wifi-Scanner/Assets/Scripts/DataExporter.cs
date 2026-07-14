@@ -763,7 +763,7 @@ namespace WifiScanner
         /// </summary>
         public static int DeleteAllExports()
         {
-            string[] patterns = { "*.csv", "*.json", "*.obj", "*.png", "*.svg", "*.html" };
+            string[] patterns = { "*.csv", "*.json", "*.obj", "*.ply", "*.png", "*.svg", "*.html" };
             int count = 0;
             foreach (string pattern in patterns)
             {
@@ -792,7 +792,7 @@ namespace WifiScanner
         public static int DeleteExportStem(string stem)
         {
             if (string.IsNullOrWhiteSpace(stem)) return 0;
-            string[] patterns = { "*.csv", "*.json", "*.obj", "*.png", "*.svg", "*.html" };
+            string[] patterns = { "*.csv", "*.json", "*.obj", "*.ply", "*.png", "*.svg", "*.html" };
             int count = 0;
             foreach (string pattern in patterns)
                 foreach (string file in Directory.GetFiles(

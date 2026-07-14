@@ -17,6 +17,39 @@ namespace WifiScanner
         /// <summary>Highlight colour for active tabs/tools (same blue as sliders).</summary>
         public static readonly Color ActiveColor = new Color(0.3f, 0.65f, 0.95f, 1f);
 
+        /// <summary>
+        /// Turns an existing button cell into a compact Android-settings-style
+        /// check field: option name on the left, state indicator on the right.
+        /// The button keeps its existing click listener.
+        /// </summary>
+        public static UiCheckButton MakeCheckButton(TextMeshProUGUI label,
+            Image background, bool initialValue)
+        {
+            label.alignment = TextAlignmentOptions.MidlineLeft;
+            label.fontSize = 19f;
+            label.rectTransform.offsetMin = new Vector2(12f, 0f);
+            label.rectTransform.offsetMax = new Vector2(-48f, 0f);
+
+            var boxGo = new GameObject("CheckBox", typeof(RectTransform));
+            boxGo.transform.SetParent(background.transform, false);
+            var boxRect = (RectTransform)boxGo.transform;
+            boxRect.anchorMin = boxRect.anchorMax = new Vector2(1f, 0.5f);
+            boxRect.pivot = new Vector2(1f, 0.5f);
+            boxRect.anchoredPosition = new Vector2(-10f, 0f);
+            boxRect.sizeDelta = new Vector2(28f, 28f);
+            var box = boxGo.AddComponent<Image>();
+            box.raycastTarget = false;
+
+            var check = AddText(boxGo.transform, "✓", 22f,
+                FontStyles.Bold, TextAlignmentOptions.Center);
+            check.raycastTarget = false;
+            Stretch(check.rectTransform);
+
+            var visual = background.gameObject.AddComponent<UiCheckButton>();
+            visual.Initialize(background, box, check, initialValue);
+            return visual;
+        }
+
         // Small grey section caption with a bit of air above it.
         public static void AddHeader(Transform parent, string title)
         {
@@ -229,6 +262,43 @@ namespace WifiScanner
             rt.anchorMax = Vector2.one;
             rt.offsetMin = Vector2.zero;
             rt.offsetMax = Vector2.zero;
+        }
+    }
+
+    /// <summary>Visual state for a button that behaves like a checked setting.</summary>
+    public sealed class UiCheckButton : MonoBehaviour
+    {
+        private Image _background;
+        private Image _box;
+        private TextMeshProUGUI _check;
+
+        public bool IsChecked { get; private set; }
+
+        public void Initialize(Image background, Image box,
+            TextMeshProUGUI check, bool initialValue)
+        {
+            _background = background;
+            _box = box;
+            _check = check;
+            SetChecked(initialValue);
+        }
+
+        public void SetChecked(bool value)
+        {
+            IsChecked = value;
+            if (_background != null)
+                _background.color = value
+                    ? new Color(0.16f, 0.36f, 0.53f, 1f)
+                    : UiBuilder.ButtonColor;
+            if (_box != null)
+                _box.color = value
+                    ? UiBuilder.ActiveColor
+                    : new Color(0.11f, 0.12f, 0.16f, 1f);
+            if (_check != null)
+            {
+                _check.text = value ? "✓" : "";
+                _check.color = Color.white;
+            }
         }
     }
 }

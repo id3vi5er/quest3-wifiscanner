@@ -200,7 +200,8 @@ namespace WifiScanner
             if (i < 0 || i >= _samples.Count) return;
             var snapshot = new List<ThroughputSample>(_samples.Count);
             foreach (var s in _samples) snapshot.Add(Copy(s));
-            UndoStack.Push("Durchsatzpunkt gelöscht", () => LoadNodes(snapshot));
+            UndoStack.Push(LocalizationManager.Get("throughput.deleted_undo"),
+                () => LoadNodes(snapshot));
 
             if (i < _markers.Count && _markers[i] != null) Destroy(_markers[i]);
             if (i < _labels.Count && _labels[i] != null) Destroy(_labels[i].gameObject);

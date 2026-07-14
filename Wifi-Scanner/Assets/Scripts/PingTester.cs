@@ -274,7 +274,8 @@ namespace WifiScanner
                 : _matBad;
             if (node.renderer != null && m != null) node.renderer.sharedMaterial = m;
             if (node.label != null)
-                node.label.SetText(ms < 0 ? "Fehler" : $"{ms} ms");
+                node.label.SetText(ms < 0
+                    ? LocalizationManager.Get("ping.error") : $"{ms} ms");
             Debug.Log($"[PingTester] {host}: {(ms < 0 ? "Fehler" : ms + " ms")}.");
         }
 
@@ -348,7 +349,8 @@ namespace WifiScanner
             // Samples builds fresh PingSample objects, so the list copy is a
             // safe snapshot.
             var snapshot = new List<PingSample>(Samples);
-            UndoStack.Push("Ping-Knoten gelöscht", () => LoadNodes(snapshot));
+            UndoStack.Push(LocalizationManager.Get("ping.deleted_undo"),
+                () => LoadNodes(snapshot));
             var n = _nodes[i];
             if (n.marker != null) Destroy(n.marker.gameObject);
             if (n.label != null) Destroy(n.label.gameObject);

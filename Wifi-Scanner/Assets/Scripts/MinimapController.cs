@@ -119,6 +119,7 @@ namespace WifiScanner
         private RectTransform _marker;
         private TextMeshProUGUI _placeholder;
         private TextMeshProUGUI _statusText;
+        private TextMeshProUGUI _title;
         private InputAction _toggleAction;
         private InputAction _zoomStick;
         private float _refreshTimer;
@@ -148,6 +149,8 @@ namespace WifiScanner
 
             var canvas = _canvasGo.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 210;
             var rt = (RectTransform)canvasTr;
             // Extra height below the map for the status line + legend (the
             // info that used to live on the removed left-wrist HUD).
@@ -155,17 +158,17 @@ namespace WifiScanner
 
             var bg = new GameObject("Panel", typeof(RectTransform)).AddComponent<Image>();
             bg.transform.SetParent(canvasTr, false);
-            bg.color = new Color(0f, 0f, 0f, 0.55f);
+            bg.color = new Color(0f, 0f, 0f, 0.90f);
             Stretch(bg.rectTransform);
 
-            var title = new GameObject("Title", typeof(RectTransform))
+            _title = new GameObject("Title", typeof(RectTransform))
                 .AddComponent<TextMeshProUGUI>();
-            title.transform.SetParent(canvasTr, false);
-            title.text = "Minimap";
-            title.fontSize = 18f;
-            title.color = Color.white;
-            title.alignment = TextAlignmentOptions.Center;
-            var titleRt = title.rectTransform;
+            _title.transform.SetParent(canvasTr, false);
+            _title.text = LocalizationManager.Get("minimap.title");
+            _title.fontSize = 18f;
+            _title.color = Color.white;
+            _title.alignment = TextAlignmentOptions.Center;
+            var titleRt = _title.rectTransform;
             titleRt.anchorMin = new Vector2(0f, 1f);
             titleRt.anchorMax = new Vector2(1f, 1f);
             titleRt.pivot = new Vector2(0.5f, 1f);
@@ -262,7 +265,7 @@ namespace WifiScanner
             _placeholder = new GameObject("Placeholder", typeof(RectTransform))
                 .AddComponent<TextMeshProUGUI>();
             _placeholder.transform.SetParent(canvasTr, false);
-            _placeholder.text = "(noch keine Daten)";
+            _placeholder.text = LocalizationManager.Get("minimap.no_data");
             _placeholder.fontSize = 16f;
             _placeholder.color = new Color(1f, 1f, 1f, 0.6f);
             _placeholder.alignment = TextAlignmentOptions.Center;
@@ -327,6 +330,7 @@ namespace WifiScanner
 
         private void OnEnable()
         {
+            LocalizationManager.LanguageChanged += OnLanguageChanged;
             _toggleAction = new InputAction("ToggleMinimap", InputActionType.Button,
                 "<XRController>{LeftHand}/secondaryButton");
             _toggleAction.Enable();
@@ -337,8 +341,17 @@ namespace WifiScanner
 
         private void OnDisable()
         {
+            LocalizationManager.LanguageChanged -= OnLanguageChanged;
             _toggleAction?.Disable();
             _zoomStick?.Disable();
+        }
+
+        private void OnLanguageChanged()
+        {
+            if (_title != null) _title.text = LocalizationManager.Get("minimap.title");
+            if (_placeholder != null)
+                _placeholder.text = LocalizationManager.Get("minimap.no_data");
+            RefreshStatus();
         }
 
         /// <summary>Map zoom factor (1 = whole map fits, higher = zoomed in
@@ -390,18 +403,17 @@ namespace WifiScanner
         private void RefreshStatus()
         {
             if (_statusText == null || collector == null) return;
-            string rec = collector.IsRecording
-                ? "<color=#7CFC7C>● REC</color>"
-                : "<color=#FF6B6B>■ PAUSE</color>";
+            string rec = LocalizationManager.Get(collector.IsRecording
+                ? "ui.stats.recording" : "ui.stats.paused");
             int secs = Mathf.RoundToInt(collector.RecordingSeconds);
             string storey = floorManager != null
-                ? $" · {floorManager.CurrentLabel}" : "";
+                ? $" · {LocalizationManager.DisplayFloorLabel(floorManager.CurrentLabel)}"
+                : "";
             string ssid = string.IsNullOrEmpty(collector.LastSsid)
                 ? "—" : collector.LastSsid;
-            _statusText.text =
-                $"{rec}  {secs / 60:D2}:{secs % 60:D2}   " +
-                $"{collector.LastRssi} dBm\n" +
-                $"{collector.SampleCount} Pkt · {ssid}{storey}";
+            _statusText.text = LocalizationManager.Format("minimap.status",
+                rec, secs / 60, secs % 60, collector.LastRssi,
+                collector.SampleCount, ssid, storey);
         }
 
         // Re-reads the texture reference (recreated on area growth) and keeps

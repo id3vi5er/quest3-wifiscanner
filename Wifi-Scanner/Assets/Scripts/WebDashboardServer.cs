@@ -43,10 +43,14 @@ namespace WifiScanner
         public int maxSnapshotSamples = 8000;
 
         public bool IsRunning { get; private set; }
+        public bool HasWebSocketClients
+        {
+            get { lock (_clients) return _clients.Count > 0; }
+        }
 
         private const string WsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
         private static readonly string[] ExportPatterns =
-            { "*.csv", "*.json", "*.png", "*.svg", "*.obj", "*.html" };
+            { "*.csv", "*.json", "*.png", "*.svg", "*.obj", "*.ply", "*.html" };
 
         private TcpListener _listener;
         private Thread _acceptThread;
@@ -69,6 +73,10 @@ namespace WifiScanner
         private readonly List<string> _samples = new List<string>();
         private readonly object _stateLock = new object();
         private readonly Queue<Action> _mainThread = new Queue<Action>();
+        private readonly object _exportLock = new object();
+        private string _exportState = "idle";
+        private string _exportError = "";
+        private long _exportCompletedMs;
         private readonly object _speedLock = new object();
         private readonly Dictionary<string, SpeedSession> _speedSessions =
             new Dictionary<string, SpeedSession>();
@@ -105,6 +113,12 @@ namespace WifiScanner
         {
             if (runAtStart) SetEnabled(true);
         }
+
+        private void OnEnable() =>
+            LocalizationManager.LanguageChanged += BroadcastLanguage;
+
+        private void OnDisable() =>
+            LocalizationManager.LanguageChanged -= BroadcastLanguage;
 
         public void SetEnabled(bool on)
         {
@@ -219,6 +233,10 @@ namespace WifiScanner
             SendFrameToAll(frame);
         }
 
+        private void BroadcastLanguage() => Broadcast(
+            "{\"type\":\"language\",\"language\":\"" +
+            LocalizationManager.CurrentCode + "\"}");
+
         private int SendFrameToAll(byte[] frame)
         {
             List<Client> dead = null;
@@ -331,6 +349,13 @@ namespace WifiScanner
                 ServeZip(stream);
             else if (path == "/export")
                 ServeExport(stream);
+            else if (path == "/export-status")
+                ServeExportStatus(stream);
+            else if (path == "/language")
+                WriteHttp(stream, "200 OK", "application/json",
+                    Bytes("{\"language\":\"" +
+                        LocalizationManager.CurrentCode + "\"}"),
+                    "Cache-Control: no-store\r\n");
             else if (path == "/speed/start" && method == "POST")
                 ServeSpeedStart(stream, query, headers);
             else if (path == "/speed/ping")
@@ -593,10 +618,71 @@ namespace WifiScanner
 
         private void ServeExport(NetworkStream stream)
         {
-            if (collector != null)
-                lock (_mainThread) _mainThread.Enqueue(() => collector.Export());
-            WriteHttp(stream, "200 OK", "application/json",
-                Bytes("{\"ok\":true}"));
+            if (collector == null)
+            {
+                WriteHttp(stream, "503 Service Unavailable", "application/json",
+                    Bytes("{\"ok\":false,\"error\":\"Kein SampleCollector verbunden.\"}"));
+                return;
+            }
+
+            lock (_exportLock)
+            {
+                if (_exportState == "queued" || _exportState == "running")
+                {
+                    WriteHttp(stream, "409 Conflict", "application/json",
+                        Bytes("{\"ok\":false,\"state\":\"" + _exportState + "\"}"));
+                    return;
+                }
+                _exportState = "queued";
+                _exportError = "";
+                _exportCompletedMs = 0;
+            }
+
+            lock (_mainThread)
+                _mainThread.Enqueue(() =>
+                {
+                    lock (_exportLock) _exportState = "running";
+                    try
+                    {
+                        collector.Export();
+                        lock (_exportLock)
+                        {
+                            _exportState = "done";
+                            _exportCompletedMs =
+                                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        lock (_exportLock)
+                        {
+                            _exportState = "error";
+                            _exportError = e.Message;
+                        }
+                        Debug.LogError($"[WebDashboard] Export fehlgeschlagen: {e}");
+                    }
+                });
+
+            WriteHttp(stream, "202 Accepted", "application/json",
+                Bytes("{\"ok\":true,\"state\":\"queued\"}"));
+        }
+
+        private void ServeExportStatus(NetworkStream stream)
+        {
+            string state;
+            string error;
+            long completed;
+            lock (_exportLock)
+            {
+                state = _exportState;
+                error = _exportError;
+                completed = _exportCompletedMs;
+            }
+            string json = "{\"state\":\"" + Escape(state) +
+                "\",\"completed\":" + completed +
+                ",\"error\":\"" + Escape(error) + "\"}";
+            WriteHttp(stream, "200 OK", "application/json", Bytes(json),
+                "Cache-Control: no-store\r\n");
         }
 
         private IEnumerable<string> ExportFiles()
@@ -610,7 +696,8 @@ namespace WifiScanner
         {
             string ext = Path.GetExtension(name).ToLowerInvariant();
             return ext == ".csv" || ext == ".json" || ext == ".png" ||
-                   ext == ".svg" || ext == ".obj" || ext == ".html";
+                   ext == ".svg" || ext == ".obj" || ext == ".ply" ||
+                   ext == ".html";
         }
 
         // ---- WebSocket plumbing ----
@@ -808,6 +895,7 @@ namespace WifiScanner
                 case ".png": return "image/png";
                 case ".svg": return "image/svg+xml";
                 case ".obj": return "text/plain";
+                case ".ply": return "application/octet-stream";
                 case ".html": return "text/html; charset=utf-8";
                 case ".zip": return "application/zip";
                 default: return "application/octet-stream";

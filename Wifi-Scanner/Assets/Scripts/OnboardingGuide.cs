@@ -41,6 +41,7 @@ namespace WifiScanner
         private TextMeshProUGUI _title;
         private TextMeshProUGUI _text;
         private TextMeshProUGUI _nextLabel;
+        private TextMeshProUGUI _skipLabel;
         private UnityEngine.InputSystem.InputAction _posAction;
         private UnityEngine.InputSystem.InputAction _rotAction;
 
@@ -68,62 +69,43 @@ namespace WifiScanner
             {
                 new Step
                 {
-                    title = "Willkommen!",
-                    text = "Diese App macht dein WLAN sichtbar: Beim Laufen " +
-                           "werden Signalstärke-Punkte in den Raum gezeichnet.\n\n" +
-                           "Linkes Handgelenk = Werkzeug-Palette,\n" +
-                           "Menü-Taste (links) = Hauptmenü,\n" +
-                           "rechtes Handgelenk = Minimap + Status.",
+                    title = LocalizationManager.Get("tutorial.welcome.title"),
+                    text = LocalizationManager.Get("tutorial.welcome.text"),
                 },
                 new Step
                 {
-                    title = "Boden kalibrieren",
-                    text = "Menü → Tab „Räume“ → „Boden kalibrieren“: den " +
-                           "Cursor an den echten Boden halten und Trigger " +
-                           "drücken. Damit sitzen Heatmap und Räume exakt.",
+                    title = LocalizationManager.Get("tutorial.floor.title"),
+                    text = LocalizationManager.Get("tutorial.floor.text"),
                 },
                 new Step
                 {
-                    title = "Raum zeichnen",
-                    text = "Auf der Palette (linkes Handgelenk) „Raum“ antippen, " +
-                           "dann mit dem Trigger die Ecken deines Raums anklicken. " +
-                           "B = Raum schließen, A = letzte Ecke zurück.\n\n" +
-                           "<color=#7CFC7C>Geht automatisch weiter, sobald ein " +
-                           "Raum fertig ist.</color>",
+                    title = LocalizationManager.Get("tutorial.room.title"),
+                    text = LocalizationManager.Get("tutorial.room.text"),
                     autoAdvance = () => roomTracer != null && roomTracer.Rooms.Count > 0,
                 },
                 new Step
                 {
-                    title = "Aufnahme starten",
-                    text = "A-Taste (rechts) oder Menü → „Aufnahme“ startet die " +
-                           "Messung. Dann einfach langsam durch den Raum gehen — " +
-                           "die farbigen Punkte zeigen die Signalstärke.\n\n" +
-                           "<color=#7CFC7C>Geht automatisch weiter, sobald " +
-                           "Messpunkte da sind.</color>",
+                    title = LocalizationManager.Get("tutorial.record.title"),
+                    text = LocalizationManager.Get("tutorial.record.text"),
                     autoAdvance = () => collector != null &&
                         collector.IsRecording && collector.SampleCount > 20,
                 },
                 new Step
                 {
-                    title = "Ansicht & Karte",
-                    text = "R-Stick-Klick wechselt Punktwolke/Heatmap. " +
-                           "Y (links) blendet die Minimap ein/aus, R-Stick " +
-                           "hoch/runter zoomt sie. Im Menü-Tab „Ansicht“ gibt es " +
-                           "Filter, Occlusion und die Prognose.",
+                    title = LocalizationManager.Get("tutorial.view.title"),
+                    text = LocalizationManager.Get("tutorial.view.text"),
                 },
                 new Step
                 {
-                    title = "Export & Bericht",
-                    text = "Menü → „Aufnahme“ → „Export“ schreibt CSV/PNG/SVG/OBJ " +
-                           "und einen HTML-Bericht auf die Brille. Über das " +
-                           "Web-Dashboard (Tab „System“) lädst du alles ohne " +
-                           "Kabel aufs Handy oder den PC.\n\nViel Spaß!",
+                    title = LocalizationManager.Get("tutorial.export.title"),
+                    text = LocalizationManager.Get("tutorial.export.text"),
                 },
             };
         }
 
         private void OnEnable()
         {
+            LocalizationManager.LanguageChanged += OnLanguageChanged;
             _posAction = new UnityEngine.InputSystem.InputAction("GuidePos",
                 UnityEngine.InputSystem.InputActionType.Value,
                 "<XRController>{RightHand}/pointerPosition", expectedControlType: "Vector3");
@@ -176,12 +158,27 @@ namespace WifiScanner
                 Finish();
                 return;
             }
-            var step = _steps[_index];
+            RefreshCurrentStep();
+            PlaceInFrontOfUser();
+        }
+
+        private void OnLanguageChanged()
+        {
+            BuildSteps();
+            RefreshCurrentStep();
+            if (_skipLabel != null)
+                _skipLabel.text = LocalizationManager.Get("tutorial.skip");
+        }
+
+        private void RefreshCurrentStep()
+        {
+            if (_index < 0 || _index >= _steps.Length || _title == null) return;
+            Step step = _steps[_index];
             _title.text = $"{step.title}  <color=#8a93a6>({_index + 1}/{_steps.Length})</color>";
             _text.text = step.text;
             if (_nextLabel != null)
-                _nextLabel.text = _index == _steps.Length - 1 ? "Fertig" : "Weiter";
-            PlaceInFrontOfUser();
+                _nextLabel.text = LocalizationManager.Get(
+                    _index == _steps.Length - 1 ? "tutorial.finish" : "tutorial.next");
         }
 
         private void Finish()
@@ -194,6 +191,7 @@ namespace WifiScanner
 
         private void OnDisable()
         {
+            LocalizationManager.LanguageChanged -= OnLanguageChanged;
             _posAction?.Disable();
             _rotAction?.Disable();
             XrUiHover.Clear(this);
@@ -218,7 +216,10 @@ namespace WifiScanner
 
             _root = new GameObject("OnboardingCard", typeof(RectTransform), typeof(Canvas));
             _root.transform.SetParent(transform, false);
-            _root.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            var canvas = _root.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 220;
             var rt = (RectTransform)_root.transform;
             rt.sizeDelta = new Vector2(460f, 360f);
             _root.transform.localScale = Vector3.one * 0.0008f;
@@ -227,7 +228,7 @@ namespace WifiScanner
 
             var bg = new GameObject("Background", typeof(RectTransform)).AddComponent<Image>();
             bg.transform.SetParent(_root.transform, false);
-            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.92f);
+            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.96f);
             UiBuilder.Stretch(bg.rectTransform);
 
             var content = new GameObject("Content", typeof(RectTransform));
@@ -247,9 +248,11 @@ namespace WifiScanner
                 FontStyles.Normal, TextAlignmentOptions.TopLeft);
             _text.gameObject.AddComponent<LayoutElement>().preferredHeight = 200f;
             var buttons = UiBuilder.AddButtonRow(content.transform,
-                ("Weiter", () => { Haptics.TickRight(); Advance(); }),
-                ("Überspringen", Finish));
+                (LocalizationManager.Get("tutorial.next"),
+                    () => { Haptics.TickRight(); Advance(); }),
+                (LocalizationManager.Get("tutorial.skip"), Finish));
             _nextLabel = buttons[0];
+            _skipLabel = buttons[1];
         }
     }
 }

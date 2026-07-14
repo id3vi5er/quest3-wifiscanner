@@ -686,7 +686,8 @@ namespace WifiScanner
         {
             if (index < 0 || index >= _visuals.Count) return;
             var snapshot = UndoStack.CloneRooms(_rooms);
-            UndoStack.Push("Raum gelöscht", () => LoadRooms(snapshot));
+            UndoStack.Push(LocalizationManager.Get("room.deleted_undo"),
+                () => LoadRooms(snapshot));
             Destroy(_visuals[index].root);
             _visuals.RemoveAt(index);
             _rooms.RemoveAt(index);
@@ -871,7 +872,8 @@ namespace WifiScanner
                 var ops = _rooms[r].openings;
                 if (ops.Count == 0) continue;
                 var snapshot = UndoStack.CloneRooms(_rooms);
-                UndoStack.Push("Öffnung entfernt", () => LoadRooms(snapshot));
+                UndoStack.Push(LocalizationManager.Get("opening.removed_undo"),
+                    () => LoadRooms(snapshot));
                 ops.RemoveAt(ops.Count - 1);
                 RebuildRoomVisual(_visuals[r]);
                 SendRoomsUpdate();

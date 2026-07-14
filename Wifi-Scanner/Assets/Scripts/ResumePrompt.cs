@@ -30,6 +30,10 @@ namespace WifiScanner
 
         private GameObject _root;
         private TextMeshProUGUI _title;
+        private TextMeshProUGUI _info;
+        private TextMeshProUGUI _resumeLabel;
+        private TextMeshProUGUI _discardLabel;
+        private System.DateTime _written;
         private InputAction _posAction;
         private InputAction _rotAction;
         private bool _placed;
@@ -50,6 +54,7 @@ namespace WifiScanner
 
         private void OnEnable()
         {
+            LocalizationManager.LanguageChanged += OnLanguageChanged;
             _posAction = new InputAction("ResumePos", InputActionType.Value,
                 "<XRController>{RightHand}/pointerPosition", expectedControlType: "Vector3");
             _posAction.AddBinding("<XRController>{RightHand}/devicePosition"); // fallback
@@ -62,6 +67,7 @@ namespace WifiScanner
 
         private void OnDisable()
         {
+            LocalizationManager.LanguageChanged -= OnLanguageChanged;
             _posAction?.Disable();
             _rotAction?.Disable();
             XrUiHover.Clear(this);
@@ -100,7 +106,8 @@ namespace WifiScanner
             bool ok = sessionLoader.LoadStem(AutosaveStem);
             if (!ok && _title != null)
             {
-                _title.text = "<color=#FF6B6B>Laden fehlgeschlagen</color>";
+                _title.text = "<color=#FF6B6B>" +
+                    LocalizationManager.Get("resume.load_failed") + "</color>";
                 _age = timeoutSeconds - 2f; // show briefly, then close
                 return;
             }
@@ -130,9 +137,13 @@ namespace WifiScanner
 
         private void BuildCard(System.DateTime written)
         {
+            _written = written;
             _root = new GameObject("ResumePrompt", typeof(RectTransform), typeof(Canvas));
             _root.transform.SetParent(transform, false);
-            _root.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            var canvas = _root.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 220;
             var rt = (RectTransform)_root.transform;
             rt.sizeDelta = new Vector2(420f, 220f);
             _root.transform.localScale = Vector3.one * 0.0008f;
@@ -141,7 +152,7 @@ namespace WifiScanner
 
             var bg = new GameObject("Background", typeof(RectTransform)).AddComponent<Image>();
             bg.transform.SetParent(_root.transform, false);
-            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.9f);
+            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.96f);
             UiBuilder.Stretch(bg.rectTransform);
 
             var content = new GameObject("Content", typeof(RectTransform));
@@ -156,16 +167,36 @@ namespace WifiScanner
             layout.childForceExpandHeight = false;
 
             _title = UiBuilder.AddText(content.transform,
-                "Letzte Session fortsetzen?", 24f, FontStyles.Bold,
+                LocalizationManager.Get("resume.title"), 24f, FontStyles.Bold,
                 TextAlignmentOptions.Center);
-            var info = UiBuilder.AddText(content.transform,
-                $"Autosave vom {written:dd.MM. HH:mm} gefunden.\n" +
-                "Nach dem Laden ggf. „Scan ausrichten“ nutzen.",
+            _info = UiBuilder.AddText(content.transform,
+                ResumeInfo(),
                 17f, FontStyles.Normal, TextAlignmentOptions.Center);
-            info.color = new Color(1f, 1f, 1f, 0.7f);
-            UiBuilder.AddButtonRow(content.transform,
-                ("Fortsetzen", OnResumeClicked),
-                ("Verwerfen", Dismiss));
+            _info.color = new Color(1f, 1f, 1f, 0.7f);
+            TextMeshProUGUI[] labels = UiBuilder.AddButtonRow(content.transform,
+                (LocalizationManager.Get("resume.continue"), OnResumeClicked),
+                (LocalizationManager.Get("resume.discard"), Dismiss));
+            _resumeLabel = labels[0];
+            _discardLabel = labels[1];
+        }
+
+        private string ResumeInfo()
+        {
+            string date = LocalizationManager.CurrentLanguage == AppLanguage.German
+                ? _written.ToString("dd.MM. HH:mm")
+                : _written.ToString("MM/dd h:mm tt",
+                    System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+            return LocalizationManager.Format("resume.info", date);
+        }
+
+        private void OnLanguageChanged()
+        {
+            if (_title != null) _title.text = LocalizationManager.Get("resume.title");
+            if (_info != null) _info.text = ResumeInfo();
+            if (_resumeLabel != null)
+                _resumeLabel.text = LocalizationManager.Get("resume.continue");
+            if (_discardLabel != null)
+                _discardLabel.text = LocalizationManager.Get("resume.discard");
         }
     }
 }

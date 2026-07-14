@@ -19,15 +19,21 @@ namespace WifiScanner
     /// </summary>
     public static class ReportGenerator
     {
+        private static string T(string key) => LocalizationManager.Get(key);
+        private static string F(string key, params object[] args) =>
+            LocalizationManager.Format(key, args);
+
         public static string Write(SampleCollector collector, string stem)
         {
             string dir = Application.persistentDataPath;
             var sb = new StringBuilder(1 << 20);
 
-            sb.AppendLine("<!DOCTYPE html><html lang=\"de\"><head>");
+            sb.Append("<!DOCTYPE html><html lang=\"")
+              .Append(LocalizationManager.CurrentCode).AppendLine("\"><head>");
             sb.AppendLine("<meta charset=\"utf-8\">");
             sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-            sb.Append("<title>WiFi-Survey ").Append(Esc(stem)).AppendLine("</title>");
+            sb.Append("<title>").Append(Esc(T("report.title"))).Append(" – ")
+              .Append(Esc(stem)).AppendLine("</title>");
             sb.AppendLine("<style>");
             sb.AppendLine("body{font-family:system-ui,sans-serif;margin:24px;" +
                           "background:#12141a;color:#e8e8ee;max-width:960px}");
@@ -44,25 +50,31 @@ namespace WifiScanner
             sb.AppendLine("</style></head><body>");
 
             // ---- Header + KPIs ----
-            sb.Append("<h1>WiFi-Survey-Report</h1><p class=\"muted\">Scan „")
-              .Append(Esc(stem)).Append("“ · erstellt ")
-              .Append(DateTime.Now.ToString("dd.MM.yyyy HH:mm"))
-              .AppendLine(" · Quest 3 WiFi-Scanner</p>");
+            string date = LocalizationManager.CurrentLanguage == AppLanguage.German
+                ? DateTime.Now.ToString("dd.MM.yyyy HH:mm")
+                : DateTime.Now.ToString("MM/dd/yyyy h:mm tt",
+                    System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+            sb.Append("<h1>").Append(T("report.title"))
+              .Append("</h1><p class=\"muted\">")
+              .Append(F("report.created", Esc(stem), date))
+              .AppendLine("</p>");
 
             int secs = Mathf.RoundToInt(collector.RecordingSeconds);
             string stats = collector.TryGetRssiStats(out int min, out int max, out float avg)
                 ? $"{min} / {max} / {avg:F0} dBm"
                 : "– / – / –";
             sb.Append("<div>")
-              .Append(Kpi($"{collector.SampleCount}", "Messpunkte"))
-              .Append(Kpi($"{secs / 60:D2}:{secs % 60:D2}", "Aufnahmezeit"))
-              .Append(Kpi(stats, "Min / Max / Ø RSSI"))
+              .Append(Kpi($"{collector.SampleCount}", T("report.kpi.points")))
+              .Append(Kpi($"{secs / 60:D2}:{secs % 60:D2}", T("report.kpi.duration")))
+              .Append(Kpi(stats, T("report.kpi.rssi")))
               .Append(Kpi(Esc(string.IsNullOrEmpty(collector.LastSsid)
-                  ? "–" : collector.LastSsid), "Netzwerk (SSID)"));
+                  ? "–" : collector.LastSsid), T("report.kpi.network")));
             if (collector.floorManager != null)
-                sb.Append(Kpi($"{collector.floorManager.Floors.Count}", "Etagen"));
+                sb.Append(Kpi($"{collector.floorManager.Floors.Count}",
+                    T("report.kpi.floors")));
             if (collector.roomTracer != null)
-                sb.Append(Kpi($"{collector.roomTracer.Rooms.Count}", "Räume"));
+                sb.Append(Kpi($"{collector.roomTracer.Rooms.Count}",
+                    T("report.kpi.rooms")));
             sb.AppendLine("</div>");
 
             // ---- Automatic findings (assessment, not just tables) ----
@@ -75,7 +87,7 @@ namespace WifiScanner
             string combined = Path.Combine(dir, $"{stem}_combined.svg");
             if (File.Exists(combined))
             {
-                sb.AppendLine("<h2>Grundriss + Heatmap (kombiniert)</h2>");
+                sb.Append("<h2>").Append(T("report.combined")).AppendLine("</h2>");
                 AppendInlineSvg(sb, combined);
             }
 
@@ -88,17 +100,19 @@ namespace WifiScanner
                 {
                     string p = Path.Combine(dir, $"{stem}_rooms_{level.label}.svg");
                     if (File.Exists(p))
-                        floorPlanFiles.Add((p, $"Etage {level.label}"));
+                        floorPlanFiles.Add((p, F("report.floor_caption",
+                            LocalizationManager.DisplayFloorLabel(level.label))));
                 }
             }
             else if (!File.Exists(combined))
             {
                 string p = Path.Combine(dir, $"{stem}_rooms.svg");
-                if (File.Exists(p)) floorPlanFiles.Add((p, "Grundriss"));
+                if (File.Exists(p))
+                    floorPlanFiles.Add((p, T("report.floor_plan")));
             }
             if (floorPlanFiles.Count > 0)
             {
-                sb.AppendLine("<h2>Grundrisse</h2>");
+                sb.Append("<h2>").Append(T("report.floor_plans")).AppendLine("</h2>");
                 foreach (var (svgPath, caption) in floorPlanFiles)
                 {
                     sb.Append("<h3>").Append(Esc(caption)).AppendLine("</h3>");
@@ -110,11 +124,9 @@ namespace WifiScanner
             var ap = collector.apLocator;
             if (ap != null && ap.Estimates.Count > 0)
             {
-                sb.AppendLine("<h2>Access Points (geschätzt)</h2><table>");
-                sb.AppendLine("<tr><th>#</th><th>SSID</th><th>BSSID</th>" +
-                              "<th>Band</th><th>Position (x/y/z, m)</th>" +
-                              "<th>stärkster RSSI</th><th>Unsicherheit</th>" +
-                              "<th>Pfadverlust n</th><th>P<sub>1m</sub></th></tr>");
+                sb.Append("<h2>").Append(T("report.ap.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.ap.headers"));
                 int apIndex = 1;
                 foreach (var est in ap.Estimates)
                     sb.Append("<tr><td>").Append(apIndex++)
@@ -124,7 +136,7 @@ namespace WifiScanner
                       .Append("</td><td>").Append(Fmt(est.Position))
                       .Append("</td><td>").Append(est.strongestRssi).Append(" dBm")
                       .Append("</td><td>").Append(est.hasFit
-                          ? $"±{est.radius:F1} m" : "– (nur Schwerpunkt)")
+                          ? $"±{est.radius:F1} m" : T("report.ap.centroid_only"))
                       .Append("</td><td>").Append(est.hasFit
                           ? est.pathLossN.ToString("F2") : "–")
                       .Append("</td><td>").Append(est.hasFit
@@ -137,9 +149,9 @@ namespace WifiScanner
             var roaming = collector.roaming;
             if (roaming != null && roaming.Events.Count > 0)
             {
-                sb.AppendLine("<h2>Roaming-Ereignisse</h2><table>");
-                sb.AppendLine("<tr><th>#</th><th>Von</th><th>Nach</th>" +
-                              "<th>Band</th><th>Position (m)</th></tr>");
+                sb.Append("<h2>").Append(T("report.roaming.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.roaming.headers"));
                 int i = 1;
                 foreach (var ev in roaming.Events)
                     sb.Append("<tr><td>").Append(i++)
@@ -158,9 +170,9 @@ namespace WifiScanner
             var walls = collector.wallLoss;
             if (walls != null && walls.Losses.Count > 0)
             {
-                sb.AppendLine("<h2>Wand-Dämpfungen (geschätzt)</h2><table>");
-                sb.AppendLine("<tr><th>Raum</th><th>Wand</th><th>Dämpfung</th>" +
-                              "<th>Messpunkte (nah/fern)</th></tr>");
+                sb.Append("<h2>").Append(T("report.walls.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.walls.headers"));
                 foreach (var w in walls.Losses)
                     sb.Append("<tr><td>").Append(RoomName(collector, w.room))
                       .Append("</td><td>").Append(w.edge + 1)
@@ -181,14 +193,15 @@ namespace WifiScanner
                         string p = Path.Combine(dir,
                             $"{stem}_walls_{level.label}.svg");
                         if (File.Exists(p))
-                            wallPlans.Add((p, $"Wand-Dämpfungen {level.label}"));
+                            wallPlans.Add((p, F("report.walls.caption",
+                                LocalizationManager.DisplayFloorLabel(level.label))));
                     }
                 }
                 else
                 {
                     string p = Path.Combine(dir, $"{stem}_walls.svg");
                     if (File.Exists(p))
-                        wallPlans.Add((p, "Grundriss mit Wand-Dämpfungen"));
+                        wallPlans.Add((p, T("report.walls.plan")));
                 }
                 foreach (var (svgPath, caption) in wallPlans)
                 {
@@ -201,8 +214,9 @@ namespace WifiScanner
             var notes = collector.spatialNotes;
             if (notes != null && notes.Notes.Count > 0)
             {
-                sb.AppendLine("<h2>Notizen</h2><table>");
-                sb.AppendLine("<tr><th>Typ</th><th>Text</th><th>Position (m)</th></tr>");
+                sb.Append("<h2>").Append(T("report.notes.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.notes.headers"));
                 foreach (var n in notes.Notes)
                     sb.Append("<tr><td>").Append(Esc(NoteTypeLabel(n.type)))
                       .Append("</td><td>").Append(Esc(n.text))
@@ -216,13 +230,15 @@ namespace WifiScanner
             var ping = collector.pingTester;
             if (ping != null && ping.NodeCount > 0)
             {
-                sb.AppendLine("<h2>Latenz-Messpunkte (TCP-Connect)</h2><table>");
-                sb.AppendLine("<tr><th>#</th><th>Latenz</th><th>Position (m)</th></tr>");
+                sb.Append("<h2>").Append(T("report.ping.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.ping.headers"));
                 int i = 1;
                 foreach (var p in ping.Samples)
                     sb.Append("<tr><td>").Append(i++)
                       .Append("</td><td>")
-                      .Append(p.latencyMs >= 0 ? $"{p.latencyMs} ms" : "Fehler")
+                      .Append(p.latencyMs >= 0 ? $"{p.latencyMs} ms"
+                          : T("ping.error"))
                       .Append("</td><td>")
                       .Append(Fmt(new Vector3(p.posX, p.posY, p.posZ)))
                       .AppendLine("</td></tr>");
@@ -233,10 +249,9 @@ namespace WifiScanner
             var throughput = collector.throughputTester;
             if (throughput != null && throughput.NodeCount > 0)
             {
-                sb.AppendLine("<h2>Lokaler WLAN-Durchsatz</h2><table>");
-                sb.AppendLine("<tr><th>#</th><th>Quest → Browser</th>" +
-                              "<th>Browser → Quest</th><th>Latenz</th>" +
-                              "<th>Band</th><th>Position (m)</th></tr>");
+                sb.Append("<h2>").Append(T("report.throughput.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.throughput.headers"));
                 int i = 1;
                 foreach (var n in throughput.Samples)
                     sb.Append("<tr><td>").Append(i++)
@@ -254,8 +269,9 @@ namespace WifiScanner
             var measurer = collector.distanceMeasurer;
             if (measurer != null && measurer.Measurements.Count > 0)
             {
-                sb.AppendLine("<h2>Distanz-Messungen</h2><table>");
-                sb.AppendLine("<tr><th>#</th><th>Länge</th><th>Von</th><th>Nach</th></tr>");
+                sb.Append("<h2>").Append(T("report.distance.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.distance.headers"));
                 int i = 1;
                 foreach (var m in measurer.Measurements)
                     sb.Append("<tr><td>").Append(i++)
@@ -270,8 +286,9 @@ namespace WifiScanner
             var drill = collector.drillPlanner;
             if (drill != null && drill.Lines.Count > 0)
             {
-                sb.AppendLine("<h2>Bohrplanung</h2><table>");
-                sb.AppendLine("<tr><th>#</th><th>Eintrittspunkt (m)</th><th>Tiefe</th></tr>");
+                sb.Append("<h2>").Append(T("report.drill.title"))
+                  .AppendLine("</h2><table>");
+                sb.AppendLine(T("report.drill.headers"));
                 int i = 1;
                 foreach (var l in drill.Lines)
                     sb.Append("<tr><td>").Append(i++)
@@ -281,12 +298,10 @@ namespace WifiScanner
                 sb.AppendLine("</table>");
             }
 
-            sb.AppendLine("<p class=\"muted\">Koordinaten sind Unity-Weltkoordinaten " +
-                          "der Aufnahme-Session (X/Z horizontal, Y hoch) und passen " +
-                          "zu den posX/Y/Z-Spalten der CSV-Datei. Heatmap-Farben: " +
-                          $"{HeatmapColorMapper.WeakDbm} dBm (rot) … " +
-                          $"{HeatmapColorMapper.StrongDbm} dBm (grün), " +
-                          "grau = nicht vermessen.</p>");
+            sb.Append("<p class=\"muted\">")
+              .Append(F("report.footer", HeatmapColorMapper.WeakDbm,
+                  HeatmapColorMapper.StrongDbm))
+              .AppendLine("</p>");
             sb.AppendLine("</body></html>");
 
             string path = Path.Combine(dir, $"{stem}_report.html");
@@ -299,12 +314,13 @@ namespace WifiScanner
         private static void AppendFindings(StringBuilder sb, SampleCollector collector)
         {
             var f = SurveyAnalyzer.Analyze(collector);
-            sb.AppendLine("<h2>Automatische Befunde</h2>");
+            sb.Append("<h2>").Append(T("report.findings.title"))
+              .AppendLine("</h2>");
             if (!f.valid)
             {
-                sb.Append("<p class=\"muted\">Keine Bewertung möglich (")
-                  .Append(Esc(f.invalidReason))
-                  .AppendLine(") — Räume zeichnen und messen, dann erneut exportieren.</p>");
+                sb.Append("<p class=\"muted\">")
+                  .Append(F("report.findings.invalid", Esc(f.invalidReason)))
+                  .AppendLine("</p>");
                 return;
             }
 
@@ -315,62 +331,59 @@ namespace WifiScanner
                 : f.coveredShare >= 0.5f ? "#FFB86B" : "#FF6B6B";
             sb.Append("<li><b style=\"color:").Append(covColor).Append("\">")
               .Append($"{f.coveredShare * 100f:F0} %")
-              .Append("</b> der Raumfläche (")
-              .Append($"{f.roomAreaSqm:F0} m²) erreichen mindestens ")
-              .Append(f.thresholdDbm).Append(" dBm — schwach: ")
-              .Append($"{f.weakShare * 100f:F0} %, nicht vermessen: ")
-              .Append($"{f.unmeasuredShare * 100f:F0} %.")
+              .Append(F("report.findings.coverage", f.roomAreaSqm,
+                  f.thresholdDbm, f.weakShare * 100f,
+                  f.unmeasuredShare * 100f))
               .AppendLine("</li>");
 
             // Largest contiguous weak zone.
             if (f.largestWeakAreaSqm > 0.5f)
-                sb.Append("<li>Größte zusammenhängende Schwachstelle: <b>")
-                  .Append($"{f.largestWeakAreaSqm:F1} m²</b> in ")
-                  .Append(Esc(f.largestWeakRoom))
-                  .Append($" (um x = {f.largestWeakCenterXZ.x:F1} / " +
-                          $"z = {f.largestWeakCenterXZ.y:F1} m).")
+                sb.Append("<li>")
+                  .Append(F("report.findings.weak_zone", f.largestWeakAreaSqm,
+                      Esc(f.largestWeakRoom), f.largestWeakCenterXZ.x,
+                      f.largestWeakCenterXZ.y))
                   .AppendLine("</li>");
             else
-                sb.AppendLine("<li style=\"color:#7CFC7C\">Keine nennenswerte " +
-                              "zusammenhängende Schwachstelle gefunden.</li>");
+                sb.Append("<li style=\"color:#7CFC7C\">")
+                  .Append(T("report.findings.no_weak_zone")).AppendLine("</li>");
 
             // Measurement density per room.
             if (f.lowDensityRooms.Count == 0)
             {
-                sb.AppendLine("<li style=\"color:#7CFC7C\">Alle Räume sind " +
-                              "ausreichend dicht vermessen.</li>");
+                sb.Append("<li style=\"color:#7CFC7C\">")
+                  .Append(T("report.findings.density_ok")).AppendLine("</li>");
             }
             else
             {
-                sb.Append("<li style=\"color:#FFB86B\">Unzureichende Messdichte in: ");
+                sb.Append("<li style=\"color:#FFB86B\">")
+                  .Append(T("report.findings.density_start"));
                 for (int i = 0; i < f.lowDensityRooms.Count; i++)
                 {
                     var room = f.lowDensityRooms[i];
                     if (i > 0) sb.Append(", ");
                     sb.Append("<b>").Append(Esc(room.name)).Append("</b> (")
-                      .Append($"{room.measuredShare * 100f:F0} % vermessen, ")
-                      .Append($"{room.samplesPerSqm:F1} Punkte/m²)");
+                      .Append(F("report.findings.density_room",
+                          room.measuredShare * 100f, room.samplesPerSqm))
+                      .Append(')');
                 }
-                sb.AppendLine(" — dort noch einmal langsam ablaufen.</li>");
+                sb.Append(T("report.findings.density_end")).AppendLine("</li>");
             }
 
             // AP overlap / roaming gaps.
             if (f.apCount < 2)
             {
-                sb.AppendLine("<li class=\"muted\">Nur ein Access Point gemessen — " +
-                              "Überlappungs-/Roaming-Analyse entfällt.</li>");
+                sb.Append("<li class=\"muted\">")
+                  .Append(T("report.findings.one_ap")).AppendLine("</li>");
             }
             else
             {
                 sb.Append("<li>").Append(f.apCount)
-                  .Append($" APs, {f.roamCount} Roaming-Ereignisse; ")
-                  .Append($"<b>{f.overlapShare * 100f:F0} %</b> der vermessenen " +
-                          "Fläche wird von mehreren APs erreicht.");
+                  .Append(F("report.findings.overlap", f.roamCount,
+                      f.overlapShare * 100f));
                 if (f.roamingGapAreaSqm > 1f)
-                    sb.Append(" <span style=\"color:#FFB86B\">Potenzielle " +
-                              $"Roaming-Lücke: {f.roamingGapAreaSqm:F1} m² " +
-                              "schwacher Bereich mit nur einem AP in Reichweite." +
-                              "</span>");
+                    sb.Append(" <span style=\"color:#FFB86B\">")
+                      .Append(F("report.findings.roaming_gap",
+                          f.roamingGapAreaSqm)).Append("</span>");
                 sb.AppendLine("</li>");
             }
 
@@ -391,13 +404,14 @@ namespace WifiScanner
                     string p = Path.Combine(dir,
                         $"{stem}_heatmap_{floorLevel.label}.png");
                     if (File.Exists(p))
-                        files.Add((p, $"Etage {floorLevel.label}"));
+                        files.Add((p, F("report.floor_caption",
+                            LocalizationManager.DisplayFloorLabel(floorLevel.label))));
                 }
             }
             if (files.Count == 0)
             {
                 string p = Path.Combine(dir, $"{stem}_heatmap.png");
-                if (File.Exists(p)) files.Add((p, "Boden-Heatmap"));
+                if (File.Exists(p)) files.Add((p, T("report.floor_heatmap")));
             }
             // Per-AP maps (only written when several BSSIDs were measured).
             var bssids = collector.KnownBssids;
@@ -412,7 +426,7 @@ namespace WifiScanner
                 }
             if (files.Count == 0) return;
 
-            sb.AppendLine("<h2>Heatmaps</h2>");
+            sb.Append("<h2>").Append(T("report.heatmaps")).AppendLine("</h2>");
             foreach (var (path, caption) in files)
             {
                 sb.Append("<h3>").Append(Esc(caption)).AppendLine("</h3>");
@@ -443,17 +457,17 @@ namespace WifiScanner
             if (rooms != null && index >= 0 && index < rooms.Count &&
                 !string.IsNullOrEmpty(rooms[index].name))
                 return Esc(rooms[index].name);
-            return $"Raum {index + 1}";
+            return F("report.room_fallback", index + 1);
         }
 
         private static string Fmt(Vector3 v) =>
             string.Format(System.Globalization.CultureInfo.InvariantCulture,
                 "{0:F2} / {1:F2} / {2:F2}", v.x, v.y, v.z);
 
-        private static string NoteTypeLabel(string type) =>
-            type == "VirtualAp" ? "Virtueller AP"
-            : type == "Interference" ? "Störquelle"
-            : "Text";
+        private static string NoteTypeLabel(string type) => LocalizationManager.Get(
+            type == "VirtualAp" ? "note.virtual_ap"
+            : type == "Interference" ? "note.interference"
+            : "note.text");
 
         private static string Esc(string s) =>
             string.IsNullOrEmpty(s)

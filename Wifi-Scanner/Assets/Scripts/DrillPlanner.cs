@@ -237,7 +237,8 @@ namespace WifiScanner
         {
             if (index < 0 || index >= _lines.Count) return;
             var snapshot = UndoStack.CloneLines(_lines);
-            UndoStack.Push("Bohrlinie gelöscht", () => LoadLines(snapshot));
+            UndoStack.Push(LocalizationManager.Get("drill.deleted_undo"),
+                () => LoadLines(snapshot));
             Destroy(_visuals[index].root);
             _visuals.RemoveAt(index);
             _lines.RemoveAt(index);

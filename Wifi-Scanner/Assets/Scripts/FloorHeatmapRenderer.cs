@@ -97,6 +97,11 @@ namespace WifiScanner
         // Per-AP view: only samples of this BSSID ("" = all APs in parallel).
         private string _bssidFilter = "";
 
+        /// <summary>Bumped whenever the cached RSSI field or its colour mapping
+        /// changes. Consumers such as the dynamic room mesh use this to refresh
+        /// their vertex colours without polling the texture itself.</summary>
+        public int FieldRevision { get; private set; }
+
         private static readonly int BaseMapId = Shader.PropertyToID("_BaseMap");
         private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
         private static readonly Color32 GapColor = new Color32(110, 110, 110, 70);
@@ -230,6 +235,17 @@ namespace WifiScanner
                 return true;
             }
             return TryGetTrackedFloorY(_xrOrigin, out y);
+        }
+
+        /// <summary>Best floor height for the currently displayed storey.</summary>
+        public bool TryGetActiveFloorY(out float y)
+        {
+            if (floorManager != null && floorManager.Floors.Count > 0)
+            {
+                y = floorManager.ActiveBaseY;
+                return true;
+            }
+            return TryGetFloorY(out y);
         }
 
         /// <summary>
@@ -635,6 +651,7 @@ namespace WifiScanner
             }
             _tex.SetPixels32(_pixels);
             _tex.Apply(false);
+            FieldRevision++;
         }
 
         // Diverging ramp for the diff view: −20 dB (worse) = red, 0 = grey,
@@ -683,6 +700,51 @@ namespace WifiScanner
         {
             Vector3 g = Quaternion.Euler(0f, -gridYawDegrees, 0f) * world;
             return new Vector2(g.x, g.z);
+        }
+
+        /// <summary>
+        /// Samples the generated IDW heatmap at a world position. Bilinear
+        /// interpolation ignores unmeasured (NaN) neighbours and returns false
+        /// outside the generated field or inside a complete gap.
+        /// </summary>
+        public bool TrySampleRssi(Vector3 world, out float rssiDbm)
+        {
+            rssiDbm = 0f;
+            if (_cellRssi == null || _texW < 1 || _texH < 1 || _worldCell <= 0f)
+                return false;
+
+            Vector2 map = WorldToMapXZ(world);
+            float fx = (map.x - _worldMin.x) / _worldCell - 0.5f;
+            float fy = (map.y - _worldMin.y) / _worldCell - 0.5f;
+            if (fx < -0.5f || fy < -0.5f ||
+                fx > _texW - 0.5f || fy > _texH - 0.5f)
+                return false;
+
+            int x0 = Mathf.FloorToInt(fx);
+            int y0 = Mathf.FloorToInt(fy);
+            float tx = fx - x0;
+            float ty = fy - y0;
+            float weighted = 0f;
+            float weightSum = 0f;
+
+            Add(x0, y0, (1f - tx) * (1f - ty));
+            Add(x0 + 1, y0, tx * (1f - ty));
+            Add(x0, y0 + 1, (1f - tx) * ty);
+            Add(x0 + 1, y0 + 1, tx * ty);
+
+            if (weightSum <= 0f) return false;
+            rssiDbm = weighted / weightSum;
+            return true;
+
+            void Add(int x, int y, float weight)
+            {
+                if (weight <= 0f || x < 0 || y < 0 || x >= _texW || y >= _texH)
+                    return;
+                float value = _cellRssi[y * _texW + x];
+                if (float.IsNaN(value)) return;
+                weighted += value * weight;
+                weightSum += weight;
+            }
         }
 
         /// <summary>

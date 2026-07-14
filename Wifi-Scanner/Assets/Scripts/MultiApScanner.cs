@@ -81,15 +81,18 @@ namespace WifiScanner
         {
             get
             {
-                if (!IsEnabled) return "Multi-AP-Scan: aus";
+                if (!IsEnabled) return LocalizationManager.Get("multi_ap.off");
                 if (collector == null || !collector.IsRecording)
-                    return "Multi-AP-Scan: wartet auf Aufnahme";
+                    return LocalizationManager.Get("multi_ap.waiting");
                 float age = Time.realtimeSinceStartup - _lastIngestRealtime;
                 string ago = _lastIngestRealtime < 0f
-                    ? "noch kein Scan"
-                    : $"Scan vor {Mathf.Max(0, Mathf.RoundToInt(age))} s";
-                string throttle = Throttled ? " · gedrosselt" : "";
-                return $"Multi-AP: {NetworkCount} Netze · {ago}{throttle}";
+                    ? LocalizationManager.Get("multi_ap.no_scan")
+                    : LocalizationManager.Format("multi_ap.scan_ago",
+                        Mathf.Max(0, Mathf.RoundToInt(age)));
+                string throttle = Throttled
+                    ? LocalizationManager.Get("multi_ap.throttled") : "";
+                return LocalizationManager.Format("multi_ap.status",
+                    NetworkCount, ago, throttle);
             }
         }
 

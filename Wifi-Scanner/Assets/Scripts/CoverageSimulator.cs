@@ -65,7 +65,9 @@ namespace WifiScanner
 
         public bool IsVisible { get; private set; }
         /// <summary>Why nothing is drawn ("" when the quad is showing).</summary>
-        public string StatusHint { get; private set; } = "";
+        public string StatusHint => string.IsNullOrEmpty(_statusKey)
+            ? "" : LocalizationManager.Get(_statusKey);
+        private string _statusKey = "coverage.no_rooms";
 
         private WallLossEstimator _wallLoss; // optional, set via SceneBootstrap
         public WallLossEstimator wallLoss
@@ -158,7 +160,7 @@ namespace WifiScanner
             _hasField = false;
             _changeHash = 0;
             _timer = updateInterval;
-            StatusHint = "Prognose: erst Räume zeichnen";
+            _statusKey = "coverage.no_rooms";
             if (_quadGo != null) _quadGo.SetActive(false);
         }
 
@@ -254,7 +256,7 @@ namespace WifiScanner
 
             if (roomTracer == null || roomTracer.Rooms.Count == 0)
             {
-                StatusHint = "Prognose: erst Räume zeichnen";
+                _statusKey = "coverage.no_rooms";
                 _quadGo.SetActive(false);
                 _hasField = false;
                 _rebuilding = false;
@@ -304,15 +306,13 @@ namespace WifiScanner
             }
             if (walls.Count == 0)
             {
-                StatusHint = "Prognose: keine Räume auf dieser Etage";
+                _statusKey = "coverage.no_rooms";
                 _quadGo.SetActive(false);
                 _hasField = false;
                 _rebuilding = false;
                 yield break;
             }
-            StatusHint = noAp
-                ? "Prognose: kein AP — virtuellen AP setzen (Notiz) oder messen"
-                : "";
+            _statusKey = noAp ? "coverage.no_ap" : "";
 
             minX -= padding; maxX += padding;
             minZ -= padding; maxZ += padding;

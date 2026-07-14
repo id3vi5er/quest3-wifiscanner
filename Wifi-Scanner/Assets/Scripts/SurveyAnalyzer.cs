@@ -55,13 +55,15 @@ namespace WifiScanner
             var rooms = collector.roomTracer != null ? collector.roomTracer.Rooms : null;
             if (rooms == null || rooms.Count == 0)
             {
-                findings.invalidReason = "keine Räume gezeichnet";
+                findings.invalidReason = LocalizationManager.Get(
+                    "report.invalid.no_rooms");
                 return findings;
             }
             var samples = collector.Samples;
             if (samples.Count == 0)
             {
-                findings.invalidReason = "keine Messpunkte";
+                findings.invalidReason = LocalizationManager.Get(
+                    "report.invalid.no_points");
                 return findings;
             }
             findings.valid = true;
@@ -91,7 +93,8 @@ namespace WifiScanner
                 var poly = room.cornersXZ;
                 if (poly.Count < 3) continue;
                 string roomName = string.IsNullOrEmpty(room.name)
-                    ? $"Raum {r + 1}" : room.name;
+                    ? LocalizationManager.Format("report.room_fallback", r + 1)
+                    : room.name;
 
                 // Room bbox -> cell grid; remember weak cells for clustering.
                 Vector2 min = poly[0], max = poly[0];
@@ -198,7 +201,8 @@ namespace WifiScanner
             if (totalCells == 0)
             {
                 findings.valid = false;
-                findings.invalidReason = "Raumflächen leer";
+                findings.invalidReason = LocalizationManager.Get(
+                    "report.invalid.empty_rooms");
                 return findings;
             }
             float cellArea = CellSize * CellSize;

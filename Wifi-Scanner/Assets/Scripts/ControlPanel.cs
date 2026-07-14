@@ -23,6 +23,7 @@ namespace WifiScanner
     public class ControlPanel : MonoBehaviour
     {
         [Header("Wired by SceneBootstrap")]
+        public SceneBootstrap bootstrap;
         public SampleCollector collector;
         public PointCloudRenderer cloud;
         public FloorHeatmapRenderer floor;
@@ -65,6 +66,8 @@ namespace WifiScanner
         // dBm range covered by the filter sliders.
         private const int FilterRangeMin = -100;
         private const int FilterRangeMax = -30;
+        private static readonly Color DestructiveButtonColor =
+            new Color(0.42f, 0.16f, 0.18f, 1f);
 
         private GameObject _root;
         private TextMeshProUGUI _statsText;
@@ -87,10 +90,29 @@ namespace WifiScanner
         private TextMeshProUGUI _bssidLabel;
         private TextMeshProUGUI _roamLabel;
         private TextMeshProUGUI _multiApLabel;
+        private TextMeshProUGUI _autosaveLabel;
+        private TextMeshProUGUI _languageLabel;
         private TextMeshProUGUI _throughputLabel;
         private TextMeshProUGUI _throughputVisibilityLabel;
         private TextMeshProUGUI _roomScanLabel;
         private TextMeshProUGUI _roomMeshVisibilityLabel;
+        private TextMeshProUGUI _roomMeshColorLabel;
+        private UiCheckButton _occlusionCheck;
+        private UiCheckButton _roomScanCheck;
+        private UiCheckButton _roomMeshVisibilityCheck;
+        private UiCheckButton _minimapCheck;
+        private UiCheckButton _floorPlanCheck;
+        private UiCheckButton _mapRotateCheck;
+        private UiCheckButton _apCheck;
+        private UiCheckButton _audioCheck;
+        private UiCheckButton _coverageCheck;
+        private UiCheckButton _roamingCheck;
+        private UiCheckButton _multiApCheck;
+        private UiCheckButton _autosaveCheck;
+        private UiCheckButton _throughputVisibilityCheck;
+        private UiCheckButton _wallLossCheck;
+        private UiCheckButton _dashboardCheck;
+        private UiCheckButton _diffCheck;
         private int _throughputPendingCount = -1;
         private float _throughputClaimUntil;
         private float _throughputRequestUntil;
@@ -143,6 +165,10 @@ namespace WifiScanner
         private Image[] _tabImages;
         private int _tabIndex;
 
+        private static string T(string key) => LocalizationManager.Get(key);
+        private static string F(string key, params object[] args) =>
+            LocalizationManager.Format(key, args);
+
         /// <summary>True while the right controller's pointer ray currently
         /// lies over ANY visible XR UI surface (this panel or the wrist tool
         /// palette). The mode tools consult this to NOT also fire their
@@ -159,6 +185,7 @@ namespace WifiScanner
 
         private void OnEnable()
         {
+            LocalizationManager.LanguageChanged += OnLanguageChanged;
             _menuAction = new InputAction("TogglePanel", InputActionType.Button,
                 "<XRController>{LeftHand}/menuButton");
             _menuAction.Enable();
@@ -177,12 +204,30 @@ namespace WifiScanner
 
         private void OnDisable()
         {
+            LocalizationManager.LanguageChanged -= OnLanguageChanged;
             _menuAction?.Disable();
             _posAction?.Disable();
             _rotAction?.Disable();
             _gripAction?.Disable();
             _dragging = false;
             XrUiHover.Clear(this);
+        }
+
+        private void OnLanguageChanged()
+        {
+            if (_root == null) return;
+            bool wasVisible = _root.activeSelf;
+            bool wasPlaced = _placed;
+            int selectedTab = _tabIndex;
+            Vector3 position = _root.transform.position;
+            Quaternion rotation = _root.transform.rotation;
+            _root.SetActive(false);
+            Destroy(_root);
+            BuildPanel();
+            _root.transform.SetPositionAndRotation(position, rotation);
+            _placed = wasPlaced;
+            SelectTab(selectedTab);
+            _root.SetActive(wasVisible);
         }
 
         private void Update()
@@ -271,12 +316,12 @@ namespace WifiScanner
 
             if (webServer == null || !webServer.IsRunning)
             {
-                ShowThroughputInfo("Web-Dashboard ist aus", 4f);
+                ShowThroughputInfo(T("ui.throughput.web_off"), 4f);
                 return;
             }
             if (!webServer.RequestBrowserThroughputTest())
             {
-                ShowThroughputInfo("Erst Webinterface öffnen", 5f);
+                ShowThroughputInfo(T("ui.throughput.open_web"), 5f);
                 return;
             }
 
@@ -284,7 +329,7 @@ namespace WifiScanner
                 ? throughputTester.NodeCount : 0;
             _throughputClaimUntil = Time.unscaledTime + 8f;
             _throughputRequestUntil = Time.unscaledTime + 90f;
-            _throughputInfoText = "Browser wird angefragt ...";
+            _throughputInfoText = T("ui.throughput.requesting");
             _throughputInfoUntil = _throughputRequestUntil;
         }
 
@@ -302,7 +347,7 @@ namespace WifiScanner
             {
                 // Sample is a struct — the list copy is a deep snapshot.
                 var snapshot = new System.Collections.Generic.List<Sample>(collector.Samples);
-                UndoStack.Push($"{snapshot.Count} Punkte gelöscht",
+                UndoStack.Push(F("ui.points.deleted_undo", snapshot.Count),
                     () => collector.LoadSamples(snapshot));
             }
             collector.ClearAll();
@@ -315,7 +360,8 @@ namespace WifiScanner
             collector.StopRecording(); // freeze the exact export/reset decision state
             _newScanPromptGo.SetActive(true);
             if (_newScanLabel != null)
-                _newScanLabel.text = "<color=#FFB86B>Export vorher?</color>";
+                _newScanLabel.text = "<color=#FFB86B>" +
+                    T("ui.new_scan.ask_export") + "</color>";
         }
 
         private void CompleteNewScan(bool exportFirst)
@@ -329,7 +375,7 @@ namespace WifiScanner
                 }
                 catch (System.Exception e)
                 {
-                    _newScanInfoText = "Export fehlgeschlagen – Daten behalten";
+                    _newScanInfoText = T("ui.new_scan.export_failed");
                     _newScanInfoUntil = Time.unscaledTime + 4f;
                     Debug.LogError($"[ControlPanel] Neuer Scan abgebrochen: {e.Message}");
                     return; // never destroy data after a failed requested export
@@ -343,9 +389,8 @@ namespace WifiScanner
             sessionLoader?.RefreshStems();
             _newScanPromptGo?.SetActive(false);
             _newScanWasRecording = false;
-            _newScanInfoText = exportFirst
-                ? "Exportiert · neuer Scan bereit (Pause)"
-                : "Neuer Scan bereit (Pause)";
+            _newScanInfoText = T(exportFirst
+                ? "ui.new_scan.export_ready" : "ui.new_scan.ready");
             _newScanInfoUntil = Time.unscaledTime + 3f;
             RefreshStats();
         }
@@ -370,7 +415,7 @@ namespace WifiScanner
             }
             _wipeArmedUntil = 0f;
             int count = DataExporter.DeleteAllExports();
-            _wipeInfoText = $"{count} Datei(en) gelöscht";
+            _wipeInfoText = F("ui.files.deleted", count);
             _wipeInfoUntil = Time.unscaledTime + 3f;
         }
 
@@ -389,8 +434,9 @@ namespace WifiScanner
             _loadArmedUntil = 0f;
             bool ok = sessionLoader.LoadCurrent();
             _loadInfoText = ok
-                ? $"{(collector != null ? collector.SampleCount : 0)} Punkte geladen"
-                : "Laden fehlgeschlagen";
+                ? F("ui.scan.loaded_points",
+                    collector != null ? collector.SampleCount : 0)
+                : T("ui.scan.load_failed");
             _loadInfoUntil = Time.unscaledTime + 3f;
         }
 
@@ -439,7 +485,8 @@ namespace WifiScanner
             if (roomTracer.Rooms.Count > 0)
             {
                 var snapshot = UndoStack.CloneRooms(roomTracer.Rooms);
-                UndoStack.Push("Räume gelöscht", () => roomTracer.LoadRooms(snapshot));
+                UndoStack.Push(T("ui.rooms.deleted_undo"),
+                    () => roomTracer.LoadRooms(snapshot));
             }
             roomTracer.ClearRooms();
         }
@@ -466,15 +513,14 @@ namespace WifiScanner
         {
             if (geiger == null) return;
             geiger.Toggle();
-            _audioLabel.text = geiger.IsOn ? "Audio: an" : "Audio: aus";
+            _audioCheck?.SetChecked(geiger.IsOn);
         }
 
         private void OnOcclusionClicked()
         {
             if (occlusion == null) return;
             occlusion.ToggleOcclusion(); // dynamische Tiefensensor-Occlusion
-            _occlusionLabel.text = occlusion.OcclusionEnabled
-                ? "Occlusion: an" : "Occlusion: aus";
+            _occlusionCheck?.SetChecked(occlusion.OcclusionEnabled);
         }
 
         private void OnRoomScanClicked() => dynamicRoomMesh?.ToggleScan();
@@ -482,11 +528,13 @@ namespace WifiScanner
         private void OnRoomMeshVisibilityClicked() =>
             dynamicRoomMesh?.ToggleMeshVisible();
 
+        private void OnRoomMeshColorClicked() => dynamicRoomMesh?.ToggleColorMode();
+
         private void OnMinimapClicked()
         {
             if (minimap == null) return;
             minimap.Toggle();
-            _minimapLabel.text = minimap.IsVisible ? "Minimap: an" : "Minimap: aus";
+            _minimapCheck?.SetChecked(minimap.IsVisible);
         }
 
         private void OnGridCalibrateClicked() => gridCalibrator?.ToggleArmed();
@@ -522,7 +570,7 @@ namespace WifiScanner
             foreach (Transform child in _floorListGo.transform)
                 Destroy(child.gameObject);
 
-            AddListEntry(_floorListGo.transform, "Alle Etagen",
+            AddListEntry(_floorListGo.transform, T("ui.floor.all"),
                 floorManager.ShowAll, () =>
                 {
                     floorManager.ShowAllFloors();
@@ -535,7 +583,8 @@ namespace WifiScanner
                 bool active = !floorManager.ShowAll &&
                               floorManager.ActiveIndex == index;
                 AddListEntry(_floorListGo.transform,
-                    $"{floors[i].label}   ({floors[i].baseY:F1} m)",
+                    $"{LocalizationManager.DisplayFloorLabel(floors[i].label)}   " +
+                    $"({floors[i].baseY:F1} m)",
                     active, () =>
                     {
                         floorManager.SelectFloor(index);
@@ -578,6 +627,11 @@ namespace WifiScanner
 
         private void OnMultiApClicked() => multiAp?.Toggle();
 
+        private void OnAutosaveClicked() => bootstrap?.ToggleAutosave();
+
+        private void OnRoomMeshOpacityChanged(float value01) =>
+            dynamicRoomMesh?.SetMeshOpacity(value01);
+
         private void OnThroughputVisibilityClicked() => throughputTester?.ToggleVisible();
 
         // AP dropdown: pick "Alle" (parallel view) or one BSSID — heatmap AND
@@ -595,6 +649,7 @@ namespace WifiScanner
             _bssidFilter = bssid ?? "";
             floor?.SetBssidFilter(_bssidFilter);
             apLocator?.SetBssidFilter(_bssidFilter);
+            dynamicRoomMesh?.SetBssidFilter(_bssidFilter);
         }
 
         // One button per known AP (order of first appearance) + "Alle APs".
@@ -606,7 +661,7 @@ namespace WifiScanner
             foreach (Transform child in _apListGo.transform)
                 Destroy(child.gameObject);
 
-            AddListEntry(_apListGo.transform, $"Alle APs ({bssids.Count})",
+            AddListEntry(_apListGo.transform, F("ui.ap.all_entry", bssids.Count),
                 _bssidFilter.Length == 0, () =>
                 {
                     SetBssidFilter("");
@@ -640,7 +695,7 @@ namespace WifiScanner
             if (distanceMeasurer.Measurements.Count > 0)
             {
                 var snapshot = UndoStack.CloneMeasurements(distanceMeasurer.Measurements);
-                UndoStack.Push("Messungen gelöscht",
+                UndoStack.Push(T("ui.measurements.deleted_undo"),
                     () => distanceMeasurer.LoadMeasurements(snapshot));
             }
             distanceMeasurer.ClearMeasurements();
@@ -652,7 +707,8 @@ namespace WifiScanner
             if (spatialNotes.Notes.Count > 0)
             {
                 var snapshot = UndoStack.CloneNotes(spatialNotes.Notes);
-                UndoStack.Push("Notizen gelöscht", () => spatialNotes.LoadNotes(snapshot));
+                UndoStack.Push(T("ui.notes.deleted_undo"),
+                    () => spatialNotes.LoadNotes(snapshot));
             }
             spatialNotes.ClearNotes();
         }
@@ -664,7 +720,8 @@ namespace WifiScanner
             {
                 var snapshot = new System.Collections.Generic.List<PingSample>(
                     pingTester.Samples);
-                UndoStack.Push("Ping-Knoten gelöscht", () => pingTester.LoadNodes(snapshot));
+                UndoStack.Push(T("ui.pings.deleted_undo"),
+                    () => pingTester.LoadNodes(snapshot));
             }
             pingTester.ClearNodes();
         }
@@ -698,87 +755,105 @@ namespace WifiScanner
             int max = _filterMax >= FilterRangeMax ? 0 : _filterMax;
             cloud?.SetRssiFilter(min, max);
             floor?.SetRssiFilter(min, max);
-            _filterLabel.text = $"Filter: {_filterMin} … {_filterMax} dBm";
+            _filterLabel.text = F("ui.filter.value", _filterMin, _filterMax);
         }
 
         private void RefreshStats()
         {
             if (_statsText == null || collector == null) return;
 
-            string rec = collector.IsRecording
-                ? "<color=#7CFC7C>● REC</color>"
-                : "<color=#FF6B6B>■ PAUSE</color>";
+            string rec = T(collector.IsRecording
+                ? "ui.stats.recording" : "ui.stats.paused");
             int secs = Mathf.RoundToInt(collector.RecordingSeconds);
             string stats = collector.TryGetRssiStats(out int min, out int max, out float avg)
-                ? $"Min {min} / Max {max} / Ø {avg:F0} dBm"
-                : "Min – / Max – / Ø – dBm";
+                ? F("ui.stats.signal", min, max, avg)
+                : T("ui.stats.signal_empty");
 
-            _statsText.text =
-                $"{rec}   {secs / 60:D2}:{secs % 60:D2}   " +
-                $"Ansicht: {(modeController != null ? modeController.ModeLabel : "-")}\n" +
-                $"Punkte: {collector.SampleCount}    " +
-                $"RSSI: {collector.LastRssi} dBm\n" +
-                $"{stats}\n" +
-                $"SSID: {collector.LastSsid}";
+            _statsText.text = F("ui.stats.main", rec, secs / 60, secs % 60,
+                modeController != null ? modeController.ModeLabel : "-",
+                collector.SampleCount, collector.LastRssi, stats, collector.LastSsid);
 
             if (_modeLabel != null && modeController != null)
-                _modeLabel.text = $"Ansicht: {modeController.ModeLabel}";
+                _modeLabel.text = F("ui.view.mode", modeController.ModeLabel);
             if (_recLabel != null)
-                _recLabel.text = collector.IsRecording ? "❚❚ Pause" : "● Aufnahme";
+                _recLabel.text = T(collector.IsRecording
+                    ? "ui.record.pause" : "ui.record.start");
             if (_floorCalLabel != null && roomTracer != null)
-                _floorCalLabel.text = roomTracer.IsCalibratingFloor
-                    ? "Cursor an Boden,\nTrigger drücken"
-                    : "Boden kalibrieren";
+                _floorCalLabel.text = T(roomTracer.IsCalibratingFloor
+                    ? "ui.floor.cursor" : "ui.floor.calibrate");
             if (_roomsClearLabel != null)
                 _roomsClearLabel.text = Time.unscaledTime < _roomsClearArmedUntil
-                    ? "<color=#FF6B6B>Sicher? Nochmal</color>"
-                    : "Räume löschen";
+                    ? "<color=#FF6B6B>" + T("common.confirm_again") + "</color>"
+                    : T("ui.rooms.delete");
             if (_roomNameLabel != null && roomTracer != null)
-                _roomNameLabel.text = roomTracer.IsNamingRoom
-                    ? "Raum anvisieren,\nTrigger = Tastatur"
-                    : "Raum benennen";
+                _roomNameLabel.text = T(roomTracer.IsNamingRoom
+                    ? "ui.room.aim_name" : "ui.room.name");
             if (_occlusionLabel != null && occlusion != null)
-                _occlusionLabel.text = occlusion.OcclusionEnabled
-                    ? "Occlusion: an" : "Occlusion: aus";
+            {
+                _occlusionLabel.text = T("ui.occlusion.label");
+                _occlusionCheck?.SetChecked(occlusion.OcclusionEnabled);
+            }
             if (_roomScanLabel != null && dynamicRoomMesh != null)
-                _roomScanLabel.text = dynamicRoomMesh.ScanEnabled
-                    ? "Raumscan: an" : "Raumscan: aus";
+            {
+                _roomScanLabel.text = T("ui.room_scan.label");
+                _roomScanCheck?.SetChecked(dynamicRoomMesh.ScanEnabled);
+            }
             if (_roomMeshVisibilityLabel != null && dynamicRoomMesh != null)
-                _roomMeshVisibilityLabel.text = dynamicRoomMesh.MeshVisible
-                    ? "Raummesh: sichtbar" : "Raummesh: verborgen";
+            {
+                _roomMeshVisibilityLabel.text = T("ui.room_mesh.visibility_label");
+                _roomMeshVisibilityCheck?.SetChecked(dynamicRoomMesh.MeshVisible);
+            }
+            if (_roomMeshColorLabel != null && dynamicRoomMesh != null)
+                _roomMeshColorLabel.text = T(dynamicRoomMesh.ColorMode ==
+                    RoomMeshColorMode.WifiSignal
+                        ? "ui.room_mesh.color_wifi"
+                        : "ui.room_mesh.color_normals");
             if (_minimapLabel != null && minimap != null)
-                _minimapLabel.text = minimap.IsVisible ? "Minimap: an" : "Minimap: aus";
+            {
+                _minimapLabel.text = T("ui.minimap.label");
+                _minimapCheck?.SetChecked(minimap.IsVisible);
+            }
             if (_gridLabel != null && gridCalibrator != null)
                 _gridLabel.text = gridCalibrator.IsArmed
-                    ? "Grips halten,\nloslassen = fertig"
+                    ? T("ui.grid.hold")
                     : (floor != null && Mathf.Abs(floor.gridYawDegrees) > 0.05f
-                        ? $"Grid ausrichten ({floor.gridYawDegrees:F0}°)"
-                        : "Grid ausrichten");
+                        ? F("ui.grid.align_value", floor.gridYawDegrees)
+                        : T("ui.grid.align"));
             if (_floorLabel != null && floorManager != null)
-                _floorLabel.text = $"Etage: {floorManager.CurrentLabel} ▾";
+                _floorLabel.text = F("ui.floor.value",
+                    LocalizationManager.DisplayFloorLabel(floorManager.CurrentLabel));
             if (_floorCreateLabel != null && floorManager != null)
                 _floorCreateLabel.text = floorManager.NewFloorSuggested
-                    ? "<color=#7CFC7C>Neue Etage!</color>"
-                    : "Etage anlegen";
+                    ? "<color=#7CFC7C>" + T("ui.floor.new") + "</color>"
+                    : T("ui.floor.create");
             // Open dropdown follows floor changes (creation, auto-switch).
             if (_floorListGo != null && _floorListGo.activeSelf &&
                 floorManager != null && floorManager.Version != _floorListVersion)
                 RebuildFloorList();
             if (_webLabel != null && webServer != null)
-                _webLabel.text = webServer.IsRunning
-                    ? "Web-Dashboard: an" : "Web-Dashboard: aus";
+            {
+                _webLabel.text = T("ui.dashboard.label");
+                _dashboardCheck?.SetChecked(webServer.IsRunning);
+            }
             if (_webUrlText != null && webServer != null)
                 _webUrlText.text = webServer.IsRunning
-                    ? webServer.Url + "  (nur lokales Netz)" : "(aus)";
+                    ? webServer.Url + "  " + T("ui.local_network")
+                    : "(" + T("common.off") + ")";
             if (_floorPlanLabel != null && minimap != null)
-                _floorPlanLabel.text = minimap.showFloorPlan
-                    ? "Grundriss: an" : "Grundriss: aus";
+            {
+                _floorPlanLabel.text = T("ui.floor_plan.label");
+                _floorPlanCheck?.SetChecked(minimap.showFloorPlan);
+            }
             if (_mapRotateLabel != null && minimap != null)
-                _mapRotateLabel.text = minimap.rotateWithHead
-                    ? "Karte: dreht mit Blick" : "Karte: Norden fest";
+            {
+                _mapRotateLabel.text = T("ui.map.rotate_label");
+                _mapRotateCheck?.SetChecked(minimap.rotateWithHead);
+            }
             if (_apLabel != null && apLocator != null)
-                _apLabel.text = apLocator.IsVisible
-                    ? "AP-Standort: an" : "AP-Standort: aus";
+            {
+                _apLabel.text = T("ui.ap_location.label");
+                _apCheck?.SetChecked(apLocator.IsVisible);
+            }
             if (_bssidLabel != null && collector != null)
             {
                 var bssids = collector.KnownBssids;
@@ -791,20 +866,20 @@ namespace WifiScanner
                     if (selected == null)
                     {
                         SetBssidFilter("");
-                        _bssidLabel.text = $"AP: Alle ({bssids.Count}) ▾";
+                        _bssidLabel.text = F("ui.ap.all", bssids.Count);
                     }
                     else
                     {
                         string ssid = string.IsNullOrEmpty(selected.ssid)
                             ? "?" : selected.ssid;
                         if (ssid.Length > 10) ssid = ssid.Substring(0, 9) + "…";
-                        _bssidLabel.text = $"AP: {ssid} · " +
-                            $"{Sample.BandLabel(selected.frequencyMhz)} ▾";
+                        _bssidLabel.text = F("ui.ap.value", ssid,
+                            Sample.BandLabel(selected.frequencyMhz));
                     }
                 }
                 else
                 {
-                    _bssidLabel.text = $"AP: Alle ({bssids.Count}) ▾";
+                    _bssidLabel.text = F("ui.ap.all", bssids.Count);
                 }
                 // Open dropdown follows new networks appearing.
                 if (_apListGo != null && _apListGo.activeSelf &&
@@ -812,11 +887,20 @@ namespace WifiScanner
                     RebuildApList();
             }
             if (_roamLabel != null && roaming != null)
-                _roamLabel.text = roaming.IsVisible
-                    ? $"Roaming: an ({roaming.Events.Count})"
-                    : "Roaming: aus";
+            {
+                _roamLabel.text = F("ui.roaming.label", roaming.Events.Count);
+                _roamingCheck?.SetChecked(roaming.IsVisible);
+            }
             if (_multiApLabel != null && multiAp != null)
-                _multiApLabel.text = multiAp.StatusLabel;
+            {
+                _multiApLabel.text = T("ui.multi_ap.label");
+                _multiApCheck?.SetChecked(multiAp.IsEnabled);
+            }
+            if (_autosaveLabel != null && bootstrap != null)
+            {
+                _autosaveLabel.text = T("ui.autosave.label");
+                _autosaveCheck?.SetChecked(bootstrap.AutosaveEnabled);
+            }
             if (_throughputLabel != null)
             {
                 if (_throughputPendingCount >= 0 && throughputTester != null &&
@@ -833,74 +917,87 @@ namespace WifiScanner
                          (webServer == null ||
                           !webServer.BrowserThroughputTestActive))
                 {
-                    ShowThroughputInfo("Browser reagiert nicht - neu laden", 7f);
+                    ShowThroughputInfo(T("ui.throughput.reload"), 7f);
                 }
                 else if (_throughputPendingCount >= 0 && webServer != null &&
                          webServer.BrowserThroughputTestActive)
                 {
-                    _throughputInfoText = "Durchsatz: Test läuft ...";
+                    _throughputInfoText = T("ui.throughput.running");
                 }
                 else if (_throughputPendingCount >= 0 &&
                          Time.unscaledTime >= _throughputRequestUntil)
                 {
-                    ShowThroughputInfo("Durchsatz: kein Ergebnis", 5f);
+                    ShowThroughputInfo(T("ui.throughput.no_result"), 5f);
                 }
 
                 _throughputLabel.text = Time.unscaledTime < _throughputInfoUntil
                     ? _throughputInfoText
-                    : $"Durchsatz messen ({(throughputTester != null ? throughputTester.NodeCount : 0)})";
+                    : F("ui.throughput.measure",
+                        throughputTester != null ? throughputTester.NodeCount : 0);
             }
             if (_throughputVisibilityLabel != null && throughputTester != null)
-                _throughputVisibilityLabel.text = throughputTester.IsVisible
-                    ? $"Durchsatzpunkte: an ({throughputTester.NodeCount})"
-                    : $"Durchsatzpunkte: aus ({throughputTester.NodeCount})";
+            {
+                _throughputVisibilityLabel.text = F("ui.throughput.points_label",
+                    throughputTester.NodeCount);
+                _throughputVisibilityCheck?.SetChecked(throughputTester.IsVisible);
+            }
+            if (_audioLabel != null && geiger != null)
+            {
+                _audioLabel.text = T("ui.audio.label");
+                _audioCheck?.SetChecked(geiger.IsOn);
+            }
             if (_coverageLabel != null && coverage != null)
-                _coverageLabel.text = !coverage.IsVisible
-                    ? "Prognose: aus"
-                    : (coverage.StatusHint.Length > 0
-                        ? "<color=#FFB86B>Prognose: fehlt Basis</color>"
-                        : "Prognose: an");
+            {
+                _coverageLabel.text = T("ui.coverage.label");
+                _coverageCheck?.SetChecked(coverage.IsVisible);
+            }
             if (_wallLossLabel != null && wallLoss != null)
-                _wallLossLabel.text = !wallLoss.IsVisible
-                    ? "Wand-Dämpfung: aus"
-                    : (apLocator != null && apLocator.HasFit
-                        ? $"Wand-Dämpfung ({wallLoss.Losses.Count})"
-                        : "Wand-Dämpfung (braucht\nAP-Fit + Messungen)");
+            {
+                _wallLossLabel.text = T("ui.wall_loss.label");
+                _wallLossCheck?.SetChecked(wallLoss.IsVisible);
+            }
             if (_wipeLabel != null)
             {
                 if (Time.unscaledTime < _wipeInfoUntil)
                     _wipeLabel.text = _wipeInfoText;
                 else if (Time.unscaledTime < _wipeArmedUntil)
-                    _wipeLabel.text = "<color=#FF6B6B>Sicher? Nochmal klicken</color>";
+                    _wipeLabel.text = "<color=#FF6B6B>" +
+                        T("common.confirm_again") + "</color>";
                 else
-                    _wipeLabel.text = "Scans löschen (Gerät)";
+                    _wipeLabel.text = T("ui.scans.delete");
             }
             if (_scanStemLabel != null && sessionLoader != null)
-                _scanStemLabel.text = $"Scan: {ShortStem(sessionLoader.CurrentStem)}";
+                _scanStemLabel.text = F("ui.scan.value",
+                    ShortStem(sessionLoader.CurrentStem));
             if (_diffStemLabel != null)
-                _diffStemLabel.text = "Vergleich: " + ShortStem(
-                    _diffIndex < _diffStems.Count ? _diffStems[_diffIndex] : null);
+                _diffStemLabel.text = F("ui.compare.value", ShortStem(
+                    _diffIndex < _diffStems.Count ? _diffStems[_diffIndex] : null));
             if (_diffToggleLabel != null && floor != null)
+            {
                 _diffToggleLabel.text = floor.DiffEnabled
-                    ? $"<color=#7CFC7C>Diff: {ShortStem(floor.DiffStem)}</color>"
-                    : "Diff: aus";
+                    ? F("ui.diff.value", ShortStem(floor.DiffStem))
+                    : T("ui.diff.label");
+                _diffCheck?.SetChecked(floor.DiffEnabled);
+            }
             if (_scanLoadLabel != null)
             {
                 if (Time.unscaledTime < _loadInfoUntil)
                     _scanLoadLabel.text = _loadInfoText;
                 else if (Time.unscaledTime < _loadArmedUntil)
-                    _scanLoadLabel.text = "<color=#FF6B6B>Sicher? Ersetzt!</color>";
+                    _scanLoadLabel.text = "<color=#FF6B6B>" +
+                        T("ui.scan.load_replace") + "</color>";
                 else
-                    _scanLoadLabel.text = "Laden";
+                    _scanLoadLabel.text = T("common.load");
             }
             if (_newScanLabel != null)
             {
                 if (Time.unscaledTime < _newScanInfoUntil)
                     _newScanLabel.text = _newScanInfoText;
                 else if (_newScanPromptGo != null && _newScanPromptGo.activeSelf)
-                    _newScanLabel.text = "<color=#FFB86B>Export vorher?</color>";
+                    _newScanLabel.text = "<color=#FFB86B>" +
+                        T("ui.new_scan.ask_export") + "</color>";
                 else
-                    _newScanLabel.text = "Neuer Scan";
+                    _newScanLabel.text = T("ui.new_scan");
             }
         }
 
@@ -1036,20 +1133,85 @@ namespace WifiScanner
             _root.transform.SetParent(transform, false);
             var canvas = _root.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 200;
             var rootRt = (RectTransform)_root.transform;
-            rootRt.sizeDelta = new Vector2(480f, 1000f); // tallest page: Ansicht
-            _root.transform.localScale = Vector3.one * 0.0008f; // 0.38 x 0.80 m
+            // 480 px main surface plus a narrow navigation rail attached to
+            // its left. The main surface keeps its former physical width.
+            rootRt.sizeDelta = new Vector2(650f, 1000f);
+            _root.transform.localScale = Vector3.one * 0.0008f; // 0.52 x 0.80 m
             _root.AddComponent<GraphicRaycaster>();            // editor mouse
             _root.AddComponent<TrackedDeviceGraphicRaycaster>(); // XR rays
 
-            var bg = new GameObject("Background", typeof(RectTransform)).AddComponent<Image>();
-            bg.transform.SetParent(_root.transform, false);
-            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.85f);
-            UiBuilder.Stretch(bg.rectTransform);
+            var shell = new GameObject("PanelShell", typeof(RectTransform));
+            shell.transform.SetParent(_root.transform, false);
+            UiBuilder.Stretch((RectTransform)shell.transform);
+            var shellLayout = shell.AddComponent<HorizontalLayoutGroup>();
+            shellLayout.spacing = 10f;
+            shellLayout.childControlWidth = true;
+            shellLayout.childControlHeight = true;
+            shellLayout.childForceExpandWidth = false;
+            shellLayout.childForceExpandHeight = true;
 
+            // ── Attached navigation rail ─────────────────────────────
+            var navigation = new GameObject("Navigation", typeof(RectTransform));
+            navigation.transform.SetParent(shell.transform, false);
+            navigation.AddComponent<LayoutElement>().preferredWidth = 150f;
+            var navigationBackground = navigation.AddComponent<Image>();
+            navigationBackground.color = new Color(0.07f, 0.08f, 0.12f, 0.94f);
+            var navigationLayout = navigation.AddComponent<VerticalLayoutGroup>();
+            navigationLayout.padding = new RectOffset(10, 10, 18, 18);
+            navigationLayout.spacing = 9f;
+            navigationLayout.childControlWidth = true;
+            navigationLayout.childControlHeight = true;
+            navigationLayout.childForceExpandWidth = true;
+            navigationLayout.childForceExpandHeight = false;
+
+            var navigationTitle = UiBuilder.AddText(navigation.transform,
+                T("ui.title"), 24f, FontStyles.Bold,
+                TextAlignmentOptions.Center);
+            navigationTitle.gameObject.AddComponent<LayoutElement>()
+                .preferredHeight = 56f;
+
+            var recordingTab = UiBuilder.AddButtonRow(navigation.transform,
+                out Image[] recordingTabBackground,
+                (T("ui.tab.recording"), () => SelectTab(0)))[0];
+            var viewTab = UiBuilder.AddButtonRow(navigation.transform,
+                out Image[] viewTabBackground,
+                (T("ui.tab.view"), () => SelectTab(1)))[0];
+            var roomsTab = UiBuilder.AddButtonRow(navigation.transform,
+                out Image[] roomsTabBackground,
+                (T("ui.tab.rooms"), () => SelectTab(2)))[0];
+            var systemTab = UiBuilder.AddButtonRow(navigation.transform,
+                out Image[] systemTabBackground,
+                (T("ui.tab.system"), () => SelectTab(3)))[0];
+            recordingTab.fontSize = viewTab.fontSize = roomsTab.fontSize =
+                systemTab.fontSize = 20f;
+            _tabImages = new[]
+            {
+                recordingTabBackground[0], viewTabBackground[0],
+                roomsTabBackground[0], systemTabBackground[0]
+            };
+
+            var navigationSpacer = new GameObject("Spacer", typeof(RectTransform));
+            navigationSpacer.transform.SetParent(navigation.transform, false);
+            navigationSpacer.AddComponent<LayoutElement>().flexibleHeight = 1f;
+
+            _recLabel = UiBuilder.AddButtonRow(navigation.transform,
+                (T("ui.record.pause"), OnRecordClicked))[0];
+            _recLabel.fontSize = 20f;
+            var exportLabel = UiBuilder.AddButtonRow(navigation.transform,
+                (T("ui.export"), OnExportClicked))[0];
+            exportLabel.fontSize = 20f;
+
+            // ── Main surface: live status + full-height tab content ───
             var content = new GameObject("Content", typeof(RectTransform));
-            content.transform.SetParent(_root.transform, false);
-            UiBuilder.Stretch((RectTransform)content.transform);
+            content.transform.SetParent(shell.transform, false);
+            var contentElement = content.AddComponent<LayoutElement>();
+            contentElement.preferredWidth = 480f;
+            contentElement.flexibleWidth = 1f;
+            var contentBackground = content.AddComponent<Image>();
+            contentBackground.color = new Color(0.05f, 0.05f, 0.08f, 0.96f);
             var layout = content.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(20, 20, 18, 18);
             layout.spacing = 8f;
@@ -1058,65 +1220,116 @@ namespace WifiScanner
             layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
 
-            // ── Fixed header: title + live stats + tab bar ────────────
-            UiBuilder.AddText(content.transform, "WiFi-Scanner", 30f,
-                FontStyles.Bold, TextAlignmentOptions.Center);
+            // Navigation no longer consumes rows above the active page.
             _statsText = UiBuilder.AddText(content.transform, "…", 22f,
                 FontStyles.Normal, TextAlignmentOptions.TopLeft);
 
-            var tabLabels = UiBuilder.AddButtonRow(content.transform, out _tabImages,
-                ("Aufnahme", () => SelectTab(0)),
-                ("Ansicht", () => SelectTab(1)),
-                ("Räume", () => SelectTab(2)),
-                ("System", () => SelectTab(3)));
-            foreach (var label in tabLabels)
-                label.fontSize = 19f; // four tabs share one row
-
-            _pages[0] = AddPage(content.transform, "PageAufnahme");
-            _pages[1] = AddPage(content.transform, "PageAnsicht");
-            _pages[2] = AddPage(content.transform, "PageRaeume");
-            _pages[3] = AddPage(content.transform, "PageSystem");
-            BuildPageAufnahme(_pages[0].transform);
-            BuildPageAnsicht(_pages[1].transform);
-            BuildPageRaeume(_pages[2].transform);
-            BuildPageSystem(_pages[3].transform);
+            _pages[0] = AddPage(content.transform, "PageAufnahme",
+                out Transform recordingPage);
+            _pages[1] = AddPage(content.transform, "PageAnsicht",
+                out Transform viewPage);
+            _pages[2] = AddPage(content.transform, "PageRaeume",
+                out Transform roomsPage);
+            _pages[3] = AddPage(content.transform, "PageSystem",
+                out Transform systemPage);
+            BuildPageAufnahme(recordingPage);
+            BuildPageAnsicht(viewPage);
+            BuildPageRaeume(roomsPage);
+            BuildPageSystem(systemPage);
             SelectTab(0);
         }
 
         // One tab page: its own vertical stack, toggled as a whole by SelectTab.
-        private static GameObject AddPage(Transform parent, string name)
+        private static GameObject AddPage(Transform parent, string name,
+            out Transform content)
         {
-            var page = new GameObject(name, typeof(RectTransform));
-            page.transform.SetParent(parent, false);
+            var viewport = new GameObject(name, typeof(RectTransform));
+            viewport.transform.SetParent(parent, false);
+            var viewportLayout = viewport.AddComponent<LayoutElement>();
+            viewportLayout.flexibleHeight = 1f;
+            viewportLayout.minHeight = 120f;
+            viewport.AddComponent<RectMask2D>();
+
+            var page = new GameObject(name + "Content", typeof(RectTransform));
+            page.transform.SetParent(viewport.transform, false);
+            var pageRect = (RectTransform)page.transform;
+            pageRect.anchorMin = new Vector2(0f, 1f);
+            pageRect.anchorMax = new Vector2(1f, 1f);
+            pageRect.pivot = new Vector2(0.5f, 1f);
+            pageRect.anchoredPosition = Vector2.zero;
+            pageRect.sizeDelta = Vector2.zero;
             var layout = page.AddComponent<VerticalLayoutGroup>();
             layout.spacing = 8f;
             layout.childControlWidth = true;
             layout.childControlHeight = true;
             layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
-            return page;
+            page.AddComponent<ContentSizeFitter>().verticalFit =
+                ContentSizeFitter.FitMode.PreferredSize;
+
+            var scroll = viewport.AddComponent<ScrollRect>();
+            scroll.viewport = (RectTransform)viewport.transform;
+            scroll.content = pageRect;
+            scroll.horizontal = false;
+            scroll.vertical = true;
+            scroll.movementType = ScrollRect.MovementType.Clamped;
+            scroll.scrollSensitivity = 45f;
+            scroll.verticalNormalizedPosition = 1f;
+            content = page.transform;
+            return viewport;
         }
 
         private void BuildPageAufnahme(Transform page)
         {
-            UiBuilder.AddTextField(page, "Export-Name (optional)",
+            UiBuilder.AddHeader(page, T("ui.section.recording"));
+            UiBuilder.AddTextField(page, T("ui.export_name"),
                 collector != null ? collector.exportName : "",
                 value => { if (collector != null) collector.exportName = value; },
                 null);
-            _recLabel = UiBuilder.AddButtonRow(page,
-                ("❚❚ Pause", OnRecordClicked),
-                ("Export", OnExportClicked))[0];
+            bool hasAutosave = bootstrap != null && bootstrap.autosaveInterval > 0f;
+            if (hasAutosave && multiAp != null)
+            {
+                var automationLabels = UiBuilder.AddButtonRow(page,
+                    out Image[] automationBackgrounds,
+                    (T("ui.autosave.label"), OnAutosaveClicked),
+                    (T("ui.multi_ap.label"), OnMultiApClicked));
+                _autosaveLabel = automationLabels[0];
+                _multiApLabel = automationLabels[1];
+                _autosaveCheck = UiBuilder.MakeCheckButton(_autosaveLabel,
+                    automationBackgrounds[0], bootstrap.AutosaveEnabled);
+                _multiApCheck = UiBuilder.MakeCheckButton(_multiApLabel,
+                    automationBackgrounds[1], multiAp.IsEnabled);
+            }
+            else if (hasAutosave)
+            {
+                _autosaveLabel = UiBuilder.AddButtonRow(page,
+                    out Image[] autosaveBackground,
+                    (T("ui.autosave.label"), OnAutosaveClicked))[0];
+                _autosaveCheck = UiBuilder.MakeCheckButton(_autosaveLabel,
+                    autosaveBackground[0], bootstrap.AutosaveEnabled);
+            }
+            else if (multiAp != null)
+            {
+                _multiApLabel = UiBuilder.AddButtonRow(page,
+                    out Image[] multiApBackground,
+                    (T("ui.multi_ap.label"), OnMultiApClicked))[0];
+                _multiApCheck = UiBuilder.MakeCheckButton(_multiApLabel,
+                    multiApBackground[0], multiAp.IsEnabled);
+            }
+
+            UiBuilder.AddHeader(page, T("ui.section.sessions"));
             if (sessionLoader != null)
             {
                 var loadLabels = UiBuilder.AddButtonRow(page,
-                    ("Scan: –", OnScanCycleClicked),
-                    ("Laden", OnScanLoadClicked));
+                    (T("ui.scan.none"), OnScanCycleClicked),
+                    (T("common.load"), OnScanLoadClicked));
                 _scanStemLabel = loadLabels[0];
                 _scanLoadLabel = loadLabels[1];
             }
-            var resetLabels = UiBuilder.AddButtonRow(page,
-                ("Punkte löschen", OnClearClicked),
-                ("Neuer Scan", OnNewScanClicked));
+            var resetLabels = UiBuilder.AddButtonRow(page, out Image[] resetBackgrounds,
+                (T("ui.points.delete"), OnClearClicked),
+                (T("ui.new_scan"), OnNewScanClicked));
+            resetBackgrounds[0].color = DestructiveButtonColor;
             _newScanLabel = resetLabels[1];
 
             _newScanPromptGo = new GameObject("NewScanPrompt", typeof(RectTransform));
@@ -1128,69 +1341,79 @@ namespace WifiScanner
             promptLayout.childForceExpandWidth = true;
             promptLayout.childForceExpandHeight = false;
             var promptText = UiBuilder.AddText(_newScanPromptGo.transform,
-                "Aktuelle Session vorher exportieren?", 18f,
+                T("ui.new_scan.question"), 18f,
                 FontStyles.Bold, TextAlignmentOptions.Center);
             promptText.gameObject.AddComponent<LayoutElement>().preferredHeight = 30f;
             UiBuilder.AddButtonRow(_newScanPromptGo.transform,
-                ("Export + Neu", () => CompleteNewScan(exportFirst: true)),
-                ("Ohne Export", () => CompleteNewScan(exportFirst: false)),
-                ("Abbrechen", () => CancelNewScanPrompt(resumeRecording: true)));
+                (T("ui.new_scan.export"), () => CompleteNewScan(exportFirst: true)),
+                (T("ui.new_scan.without_export"), () => CompleteNewScan(exportFirst: false)),
+                (T("common.cancel"), () => CancelNewScanPrompt(resumeRecording: true)));
             _newScanPromptGo.SetActive(false);
-            if (multiAp != null)
-                _multiApLabel = UiBuilder.AddButtonRow(page,
-                    ("Multi-AP-Scan: an", OnMultiApClicked))[0];
-            if (webServer != null && throughputTester != null)
-                _throughputLabel = UiBuilder.AddButtonRow(page,
-                    ("Durchsatz messen (0)", OnThroughputClicked))[0];
-            if (floor != null)
-            {
-                var diffLabels = UiBuilder.AddButtonRow(page,
-                    ("Vergleich: –", OnDiffCycleClicked),
-                    ("Diff: aus", OnDiffToggleClicked));
-                _diffStemLabel = diffLabels[0];
-                _diffToggleLabel = diffLabels[1];
-            }
             var note = UiBuilder.AddText(page,
-                "Autosave läuft mit — Export schreibt CSV/JSON/PNG/SVG/OBJ.\n" +
-                "Diff färbt die Heatmap: grün = besser als der Vergleichs-Scan, " +
-                "rot = schlechter (Scan vorher ausrichten).",
+                T("ui.recording.note"),
                 16f, FontStyles.Normal, TextAlignmentOptions.TopLeft);
             note.color = new Color(1f, 1f, 1f, 0.45f);
         }
 
         private void BuildPageAnsicht(Transform page)
         {
-            var vizLabels = UiBuilder.AddButtonRow(page,
-                ("Ansicht: Beides", OnModeClicked),
-                ("Occlusion: aus", OnOcclusionClicked));
+            UiBuilder.AddHeader(page, T("ui.section.measurement_view"));
+            var vizLabels = UiBuilder.AddButtonRow(page, out Image[] vizBackgrounds,
+                (F("ui.view.mode", T("mode.both")), OnModeClicked),
+                (T("ui.occlusion.label"), OnOcclusionClicked));
             _modeLabel = vizLabels[0];
             _occlusionLabel = vizLabels[1];
-            if (dynamicRoomMesh != null)
-            {
-                var roomMeshLabels = UiBuilder.AddButtonRow(page,
-                    ("Raumscan: aus", OnRoomScanClicked),
-                    ("Raummesh: sichtbar", OnRoomMeshVisibilityClicked));
-                _roomScanLabel = roomMeshLabels[0];
-                _roomMeshVisibilityLabel = roomMeshLabels[1];
-            }
-            var mapLabels = UiBuilder.AddButtonRow(page,
-                ("Minimap: an", OnMinimapClicked),
-                ("Grundriss: an", OnFloorPlanClicked));
+            _occlusionCheck = UiBuilder.MakeCheckButton(_occlusionLabel,
+                vizBackgrounds[1], occlusion != null && occlusion.OcclusionEnabled);
+            float startOpacity = cloud != null ? cloud.opacity : 0.6f;
+            UiBuilder.AddSliderRow(page, T("ui.opacity"), 0f, 1f, startOpacity,
+                false, OnOpacityChanged);
+
+            UiBuilder.AddHeader(page, T("ui.filter.header"));
+            UiBuilder.AddLegend(page);
+            _filterLabel = UiBuilder.AddText(page,
+                F("ui.filter.value", _filterMin, _filterMax), 22f,
+                FontStyles.Normal, TextAlignmentOptions.Left);
+            UiBuilder.AddSliderRow(page, null, FilterRangeMin, FilterRangeMax,
+                _filterMin, true, OnFilterMinChanged);
+            UiBuilder.AddSliderRow(page, null, FilterRangeMin, FilterRangeMax,
+                _filterMax, true, OnFilterMaxChanged);
+
+            UiBuilder.AddHeader(page, T("ui.section.map_wifi"));
+            var mapLabels = UiBuilder.AddButtonRow(page, out Image[] mapBackgrounds,
+                (T("ui.minimap.label"), OnMinimapClicked),
+                (T("ui.floor_plan.label"), OnFloorPlanClicked));
             _minimapLabel = mapLabels[0];
             _floorPlanLabel = mapLabels[1];
-            var mapApLabels = UiBuilder.AddButtonRow(page,
-                ("Karte: Norden fest", OnMapRotateClicked),
-                ("AP-Standort: aus", OnApLocatorClicked));
+            _minimapCheck = UiBuilder.MakeCheckButton(_minimapLabel,
+                mapBackgrounds[0], minimap != null && minimap.IsVisible);
+            _floorPlanCheck = UiBuilder.MakeCheckButton(_floorPlanLabel,
+                mapBackgrounds[1], minimap != null && minimap.showFloorPlan);
+            var mapApLabels = UiBuilder.AddButtonRow(page, out Image[] mapApBackgrounds,
+                (T("ui.map.rotate_label"), OnMapRotateClicked),
+                (T("ui.ap_location.label"), OnApLocatorClicked));
             _mapRotateLabel = mapApLabels[0];
             _apLabel = mapApLabels[1];
-            var bssidLabels = UiBuilder.AddButtonRow(page,
-                ("AP: Alle ▾", OnApDropdownClicked),
-                ("Roaming: an", OnRoamingClicked));
+            _mapRotateCheck = UiBuilder.MakeCheckButton(_mapRotateLabel,
+                mapApBackgrounds[0], minimap != null && minimap.rotateWithHead);
+            _apCheck = UiBuilder.MakeCheckButton(_apLabel,
+                mapApBackgrounds[1], apLocator != null && apLocator.IsVisible);
+            var bssidLabels = UiBuilder.AddButtonRow(page, out Image[] bssidBackgrounds,
+                (F("ui.ap.all", 0), OnApDropdownClicked),
+                (F("ui.roaming.label", 0), OnRoamingClicked));
             _bssidLabel = bssidLabels[0];
             _roamLabel = bssidLabels[1];
+            _roamingCheck = UiBuilder.MakeCheckButton(_roamLabel,
+                bssidBackgrounds[1], roaming != null && roaming.IsVisible);
             if (throughputTester != null)
+            {
                 _throughputVisibilityLabel = UiBuilder.AddButtonRow(page,
-                    ("Durchsatzpunkte: an (0)", OnThroughputVisibilityClicked))[0];
+                    out Image[] throughputVisibilityBackground,
+                    (F("ui.throughput.points_label", 0), OnThroughputVisibilityClicked))[0];
+                _throughputVisibilityCheck = UiBuilder.MakeCheckButton(
+                    _throughputVisibilityLabel, throughputVisibilityBackground[0],
+                    throughputTester.IsVisible);
+            }
 
             // Collapsible AP list ("dropdown"): all known BSSIDs, filled on
             // open — with multi-AP scanning this grows beyond a cycle button.
@@ -1206,70 +1429,114 @@ namespace WifiScanner
             if (geiger != null && coverage != null)
             {
                 var extraRow = UiBuilder.AddButtonRow(page,
-                    ("Audio: aus", OnAudioClicked),
-                    ("Prognose: aus", OnCoverageClicked));
+                    out Image[] extraBackgrounds,
+                    (T("ui.audio.label"), OnAudioClicked),
+                    (T("ui.coverage.label"), OnCoverageClicked));
                 _audioLabel = extraRow[0];
                 _coverageLabel = extraRow[1];
+                _audioCheck = UiBuilder.MakeCheckButton(_audioLabel,
+                    extraBackgrounds[0], geiger.IsOn);
+                _coverageCheck = UiBuilder.MakeCheckButton(_coverageLabel,
+                    extraBackgrounds[1], coverage.IsVisible);
             }
             else if (geiger != null)
             {
                 _audioLabel = UiBuilder.AddButtonRow(page,
-                    ("Audio: aus", OnAudioClicked))[0];
+                    out Image[] audioBackground,
+                    (T("ui.audio.label"), OnAudioClicked))[0];
+                _audioCheck = UiBuilder.MakeCheckButton(_audioLabel,
+                    audioBackground[0], geiger.IsOn);
             }
             else if (coverage != null)
             {
                 _coverageLabel = UiBuilder.AddButtonRow(page,
-                    ("Prognose: aus", OnCoverageClicked))[0];
+                    out Image[] coverageBackground,
+                    (T("ui.coverage.label"), OnCoverageClicked))[0];
+                _coverageCheck = UiBuilder.MakeCheckButton(_coverageLabel,
+                    coverageBackground[0], coverage.IsVisible);
             }
-            float startOpacity = cloud != null ? cloud.opacity : 0.6f;
-            UiBuilder.AddSliderRow(page, "Deckkraft", 0f, 1f, startOpacity,
-                false, OnOpacityChanged);
 
-            UiBuilder.AddHeader(page, "Filter (dBm)");
-            UiBuilder.AddLegend(page);
-            _filterLabel = UiBuilder.AddText(page,
-                $"Filter: {_filterMin} … {_filterMax} dBm", 22f,
-                FontStyles.Normal, TextAlignmentOptions.Left);
-            UiBuilder.AddSliderRow(page, null, FilterRangeMin, FilterRangeMax,
-                _filterMin, true, OnFilterMinChanged);
-            UiBuilder.AddSliderRow(page, null, FilterRangeMin, FilterRangeMax,
-                _filterMax, true, OnFilterMaxChanged);
+            if (floor != null)
+            {
+                UiBuilder.AddHeader(page, T("ui.section.comparison"));
+                var diffLabels = UiBuilder.AddButtonRow(page, out Image[] diffBackgrounds,
+                    (T("ui.compare.none"), OnDiffCycleClicked),
+                    (T("ui.diff.label"), OnDiffToggleClicked));
+                _diffStemLabel = diffLabels[0];
+                _diffToggleLabel = diffLabels[1];
+                _diffCheck = UiBuilder.MakeCheckButton(_diffToggleLabel,
+                    diffBackgrounds[1], floor.DiffEnabled);
+            }
         }
 
         private void BuildPageRaeume(Transform page)
         {
+            if (dynamicRoomMesh != null)
+            {
+                UiBuilder.AddHeader(page, T("ui.section.room_mesh"));
+                var roomMeshLabels = UiBuilder.AddButtonRow(page,
+                    out Image[] roomMeshBackgrounds,
+                    (T("ui.room_scan.label"), OnRoomScanClicked),
+                    (T("ui.room_mesh.visibility_label"), OnRoomMeshVisibilityClicked),
+                    (T("ui.room_mesh.color_normals"), OnRoomMeshColorClicked));
+                _roomScanLabel = roomMeshLabels[0];
+                _roomMeshVisibilityLabel = roomMeshLabels[1];
+                _roomMeshColorLabel = roomMeshLabels[2];
+                _roomScanCheck = UiBuilder.MakeCheckButton(_roomScanLabel,
+                    roomMeshBackgrounds[0], dynamicRoomMesh.ScanEnabled);
+                _roomMeshVisibilityCheck = UiBuilder.MakeCheckButton(
+                    _roomMeshVisibilityLabel, roomMeshBackgrounds[1],
+                    dynamicRoomMesh.MeshVisible);
+                _roomMeshColorLabel.fontSize = 18f;
+                UiBuilder.AddSliderRow(page, T("ui.room_mesh.opacity"), 0f, 1f,
+                    dynamicRoomMesh.MeshOpacity, false,
+                    OnRoomMeshOpacityChanged);
+            }
+
+            UiBuilder.AddHeader(page, T("ui.section.room_layout"));
             var traceLabels = UiBuilder.AddButtonRow(page,
-                ("Grid ausrichten", OnGridCalibrateClicked),
-                ("Boden kalibrieren", OnFloorCalibrateClicked));
+                (T("ui.grid.align"), OnGridCalibrateClicked),
+                (T("ui.floor.calibrate"), OnFloorCalibrateClicked));
             _gridLabel = traceLabels[0];
             _floorCalLabel = traceLabels[1];
-            var clearLabels = UiBuilder.AddButtonRow(page,
-                ("Räume löschen", OnRoomsClearClicked),
-                ("Öffnung entfernen", OnOpeningRemoveClicked));
-            _roomsClearLabel = clearLabels[0];
             _roomNameLabel = UiBuilder.AddButtonRow(page,
-                ("Raum benennen", OnRoomNameClicked))[0];
-            UiBuilder.AddButtonRow(page,
-                ("Messungen löschen", OnMeasureClearClicked),
-                ("Notizen löschen", OnNotesClearClicked));
+                (T("ui.room.name"), OnRoomNameClicked))[0];
+
+            UiBuilder.AddHeader(page, T("ui.section.room_data"));
+            var clearLabels = UiBuilder.AddButtonRow(page, out Image[] roomBackgrounds,
+                (T("ui.rooms.delete"), OnRoomsClearClicked),
+                (T("ui.opening.remove"), OnOpeningRemoveClicked));
+            roomBackgrounds[0].color = DestructiveButtonColor;
+            _roomsClearLabel = clearLabels[0];
+            UiBuilder.AddButtonRow(page, out Image[] dataBackgrounds,
+                (T("ui.measurements.delete"), OnMeasureClearClicked),
+                (T("ui.notes.delete"), OnNotesClearClicked));
+            foreach (var background in dataBackgrounds)
+                background.color = DestructiveButtonColor;
             if (wallLoss != null)
             {
-                var row = UiBuilder.AddButtonRow(page,
-                    ("Ping löschen", OnPingClearClicked),
-                    ("Wand-Dämpfung: aus", OnWallLossClicked));
+                var row = UiBuilder.AddButtonRow(page, out Image[] pingBackgrounds,
+                    (T("ui.pings.delete"), OnPingClearClicked),
+                    (T("ui.wall_loss.label"), OnWallLossClicked));
+                pingBackgrounds[0].color = DestructiveButtonColor;
                 _wallLossLabel = row[1];
+                _wallLossCheck = UiBuilder.MakeCheckButton(_wallLossLabel,
+                    pingBackgrounds[1], wallLoss.IsVisible);
             }
             else
             {
-                UiBuilder.AddButtonRow(page, ("Ping löschen", OnPingClearClicked));
+                UiBuilder.AddButtonRow(page, out Image[] pingBackgrounds,
+                    (T("ui.pings.delete"), OnPingClearClicked));
+                pingBackgrounds[0].color = DestructiveButtonColor;
             }
 
             if (floorManager != null)
             {
-                UiBuilder.AddHeader(page, "Etagen");
+                UiBuilder.AddHeader(page, T("ui.floors.header"));
                 var floorLabels = UiBuilder.AddButtonRow(page,
-                    ("Etage: EG ▾", OnFloorDropdownClicked),
-                    ("Etage anlegen", OnFloorCreateClicked));
+                    (F("ui.floor.value", LocalizationManager.DisplayFloorLabel(
+                        floorManager.CurrentLabel)), OnFloorDropdownClicked),
+                    (T("ui.floor.create"), OnFloorCreateClicked));
                 _floorLabel = floorLabels[0];
                 _floorCreateLabel = floorLabels[1];
 
@@ -1286,55 +1553,53 @@ namespace WifiScanner
                 _floorListGo.SetActive(false);
 
                 UiBuilder.AddButtonRow(page,
-                    ("▲ Etage darüber", OnFloorAboveClicked),
-                    ("▼ Etage darunter", OnFloorBelowClicked));
+                    (T("ui.floor.above"), OnFloorAboveClicked),
+                    (T("ui.floor.below"), OnFloorBelowClicked));
                 UiBuilder.AddButtonRow(page,
-                    ("Bezeichnung ▲", OnLabelShiftUpClicked),
-                    ("Bezeichnung ▼", OnLabelShiftDownClicked));
+                    (T("ui.floor.label_up"), OnLabelShiftUpClicked),
+                    (T("ui.floor.label_down"), OnLabelShiftDownClicked));
             }
         }
 
         private void BuildPageSystem(Transform page)
         {
-            _ipField = UiBuilder.AddTextField(page, "PC-IP für Live-Stream",
+            UiBuilder.AddHeader(page, T("ui.section.connections"));
+            _ipField = UiBuilder.AddTextField(page, T("ui.pc_ip"),
                 streamer != null ? streamer.targetIp : "",
                 null, OnIpEndEdit);
             if (webServer != null)
             {
-                _webLabel = UiBuilder.AddButtonRow(page,
-                    ("Web-Dashboard: an", OnWebDashboardClicked))[0];
+                _webLabel = UiBuilder.AddButtonRow(page, out Image[] dashboardBackground,
+                    (T("ui.dashboard.label"), OnWebDashboardClicked))[0];
+                _dashboardCheck = UiBuilder.MakeCheckButton(_webLabel,
+                    dashboardBackground[0], webServer.IsRunning);
                 _webUrlText = UiBuilder.AddText(page, "", 18f,
                     FontStyles.Normal, TextAlignmentOptions.Left);
                 _webUrlText.color = new Color(0.42f, 0.75f, 1f);
             }
+            if (webServer != null && throughputTester != null)
+                _throughputLabel = UiBuilder.AddButtonRow(page,
+                    (F("ui.throughput.measure", 0), OnThroughputClicked))[0];
+
+            UiBuilder.AddHeader(page, T("ui.section.settings"));
+            _languageLabel = UiBuilder.AddButtonRow(page,
+                (T("language.switch"), () => LocalizationManager.ToggleLanguage()))[0];
             if (onboarding != null)
             {
-                var sysRow = UiBuilder.AddButtonRow(page,
-                    ("Scans löschen (Gerät)", OnWipeClicked),
-                    ("Tutorial starten", () => onboarding.StartTutorial()));
-                _wipeLabel = sysRow[0];
-            }
-            else
-            {
-                _wipeLabel = UiBuilder.AddButtonRow(page,
-                    ("Scans löschen (Gerät)", OnWipeClicked))[0];
+                UiBuilder.AddButtonRow(page,
+                    (T("ui.tutorial.start"), () => onboarding.StartTutorial()));
             }
 
-            UiBuilder.AddHeader(page, "Steuerung");
+            UiBuilder.AddHeader(page, T("ui.controls.header"));
             var help = UiBuilder.AddText(page,
-                "A   Aufnahme Pause/Weiter\n" +
-                "B   Export\n" +
-                "L-Stick ↑/↓   Deckkraft\n" +
-                "R-Stick ↑/↓   Minimap-Zoom / Bohrtiefe\n" +
-                "R-Stick-Klick   Ansicht wechseln\n" +
-                "Y (links)   Minimap an/aus\n" +
-                "Menü (links)   dieses Menü\n" +
-                "R-Grip über Menü   Menü greifen/verschieben\n" +
-                "Werkzeuge: Palette am linken Handgelenk —\n" +
-                "Öffnung/Notiz/Ping halten = Optionen;\n" +
-                "aktives Werkzeug belegt Trigger/A/B.",
+                T("ui.controls.help"),
                 18f, FontStyles.Normal, TextAlignmentOptions.TopLeft);
             help.color = new Color(1f, 1f, 1f, 0.75f);
+
+            UiBuilder.AddHeader(page, T("ui.section.storage"));
+            _wipeLabel = UiBuilder.AddButtonRow(page, out Image[] wipeBackgrounds,
+                (T("ui.scans.delete"), OnWipeClicked))[0];
+            wipeBackgrounds[0].color = DestructiveButtonColor;
         }
     }
 }

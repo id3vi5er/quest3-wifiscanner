@@ -116,6 +116,7 @@ namespace WifiScanner
 
         private void OnEnable()
         {
+            LocalizationManager.LanguageChanged += OnLanguageChanged;
             _posAction = new InputAction("NotePos", InputActionType.Value,
                 "<XRController>{RightHand}/pointerPosition", expectedControlType: "Vector3");
             _posAction.AddBinding("<XRController>{RightHand}/devicePosition"); // fallback
@@ -135,11 +136,22 @@ namespace WifiScanner
 
         private void OnDisable()
         {
+            LocalizationManager.LanguageChanged -= OnLanguageChanged;
             _posAction?.Disable();
             _rotAction?.Disable();
             _placeAction?.Disable();
             _cycleAction?.Disable();
             ExclusiveTools.Unregister(this);
+        }
+
+        private void OnLanguageChanged()
+        {
+            foreach (NoteVisual visual in _visuals)
+            {
+                NoteType type = TypeForName(visual.note.type);
+                if (type != NoteType.Text && visual.label != null)
+                    visual.label.SetText(LabelFor(type));
+            }
         }
 
         // ---- Mode control ----
@@ -196,7 +208,8 @@ namespace WifiScanner
             if (_typeLabel != null)
             {
                 _typeLabel.SetWorldPosition(handPos + Vector3.up * (markerDiameter + 0.04f));
-                _typeLabel.SetText($"Typ: {LabelFor(_activeType)}\n(A = wechseln)");
+                _typeLabel.SetText(LocalizationManager.Format("note.type",
+                    LabelFor(_activeType)));
                 _typeLabel.SetColor(ColorFor(_activeType));
             }
 
@@ -338,7 +351,8 @@ namespace WifiScanner
         {
             if (i < 0 || i >= _notes.Count) return;
             var snapshot = UndoStack.CloneNotes(_notes);
-            UndoStack.Push("Notiz gelöscht", () => LoadNotes(snapshot));
+            UndoStack.Push(LocalizationManager.Get("note.deleted_undo"),
+                () => LoadNotes(snapshot));
             if (_visuals[i].marker != null) Destroy(_visuals[i].marker.gameObject);
             if (_visuals[i].label != null) Destroy(_visuals[i].label.gameObject);
             _visuals.RemoveAt(i);
@@ -374,10 +388,10 @@ namespace WifiScanner
             : t == NoteType.Interference ? new Color(1f, 0.35f, 0.3f)
             : Color.white;
 
-        private static string LabelFor(NoteType t) =>
-            t == NoteType.VirtualAp ? "Virtueller AP"
-            : t == NoteType.Interference ? "Störquelle"
-            : "Text";
+        private static string LabelFor(NoteType t) => LocalizationManager.Get(
+            t == NoteType.VirtualAp ? "note.virtual_ap"
+            : t == NoteType.Interference ? "note.interference"
+            : "note.text");
 
         // Stored type name (from a sidecar JSON) back to the enum; unknown
         // names fall back to Text so foreign files still load.

@@ -1,13 +1,15 @@
 {
   "dependencies": {
+    "com.anatawa12.custom-localization-for-editor-extension": "1.2.1",
     "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main",
+    "com.ramtype0.meshia.mesh-simplification": "https://github.com/RamType0/Meshia.MeshSimplification.git#3.1.0",
     "com.unity.feature.development": "1.0.2",
-    "com.unity.ide.rider": "3.0.39",
+    "com.unity.ide.rider": "3.0.40",
     "com.unity.inputsystem": "1.19.0",
     "com.unity.learn.iet-framework": "5.0.3",
-    "com.unity.multiplayer.center": "1.0.0",
-    "com.unity.render-pipelines.universal": "17.0.4",
-    "com.unity.shadergraph": "17.0.4",
+    "com.unity.multiplayer.center": "1.0.1",
+    "com.unity.render-pipelines.universal": "17.3.0",
+    "com.unity.shadergraph": "17.3.0",
     "com.unity.timeline": "1.8.12",
     "com.unity.xr.androidxr-openxr": "1.2.0",
     "com.unity.xr.arfoundation": "6.4.1",
@@ -19,6 +21,7 @@
     "com.unity.xr.meta-openxr": "2.5.0",
     "com.unity.xr.openxr": "1.16.1",
     "com.unity.modules.accessibility": "1.0.0",
+    "com.unity.modules.adaptiveperformance": "1.0.0",
     "com.unity.modules.ai": "1.0.0",
     "com.unity.modules.androidjni": "1.0.0",
     "com.unity.modules.animation": "1.0.0",
@@ -45,10 +48,20 @@
     "com.unity.modules.unitywebrequestaudio": "1.0.0",
     "com.unity.modules.unitywebrequesttexture": "1.0.0",
     "com.unity.modules.unitywebrequestwww": "1.0.0",
+    "com.unity.modules.vectorgraphics": "1.0.0",
     "com.unity.modules.vehicles": "1.0.0",
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
     "com.unity.modules.xr": "1.0.0"
-  }
+  },
+  "scopedRegistries": [
+    {
+      "name": "package.openupm.com",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.anatawa12.custom-localization-for-editor-extension"
+      ]
+    }
+  ]
 }

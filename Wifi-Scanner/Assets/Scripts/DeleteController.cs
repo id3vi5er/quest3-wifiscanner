@@ -180,7 +180,7 @@ namespace WifiScanner
             {
                 _prompt.SetVisible(true);
                 _prompt.SetWorldPosition(armedPos + Vector3.up * 0.12f);
-                _prompt.SetText("Nochmal drücken\nzum Löschen");
+                _prompt.SetText(LocalizationManager.Get("delete.confirm"));
             }
             else _prompt.SetVisible(false);
 

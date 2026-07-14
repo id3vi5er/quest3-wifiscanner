@@ -47,6 +47,8 @@ namespace WifiScanner
         {
             public IExclusiveTool tool;
             public Image image;
+            public TextMeshProUGUI label;
+            public string labelKey;
             public bool deleteStyle; // delete mode highlights reddish
         }
 
@@ -55,6 +57,8 @@ namespace WifiScanner
         private readonly List<Entry> _entries = new List<Entry>();
         private RectTransform _canvasRect;
         private TextMeshProUGUI _hint;
+        private TextMeshProUGUI _header;
+        private TextMeshProUGUI _undoLabel;
         private GameObject _optionsRoot;
         private LayoutElement _optionsLayout;
         private IExclusiveTool _optionsTool;
@@ -93,6 +97,8 @@ namespace WifiScanner
 
             var canvas = canvasGo.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 210;
             _canvasRect = (RectTransform)canvasTr;
             _canvasRect.sizeDelta = new Vector2(360f, 610f); // 4 grid rows + hint
             canvasGo.AddComponent<GraphicRaycaster>();            // editor mouse
@@ -101,7 +107,7 @@ namespace WifiScanner
             var bg = new GameObject("Background", typeof(RectTransform))
                 .AddComponent<Image>();
             bg.transform.SetParent(canvasTr, false);
-            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.85f);
+            bg.color = new Color(0.05f, 0.05f, 0.08f, 0.94f);
             UiBuilder.Stretch(bg.rectTransform);
 
             var content = new GameObject("Content", typeof(RectTransform));
@@ -115,7 +121,12 @@ namespace WifiScanner
             layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
 
-            UiBuilder.AddHeader(content.transform, "Werkzeuge");
+            _header = UiBuilder.AddText(content.transform,
+                LocalizationManager.Get("tool.header").ToUpperInvariant(), 17f,
+                FontStyles.Bold, TextAlignmentOptions.BottomLeft);
+            _header.color = new Color(1f, 1f, 1f, 0.45f);
+            _header.characterSpacing = 6f;
+            _header.gameObject.AddComponent<LayoutElement>().preferredHeight = 34f;
 
             var gridGo = new GameObject("ToolGrid", typeof(RectTransform));
             gridGo.transform.SetParent(content.transform, false);
@@ -126,15 +137,15 @@ namespace WifiScanner
             grid.constraintCount = 3;
             // The grid computes its own preferred height from the rows.
 
-            AddToolButton(gridGo.transform, "Raum", roomTracer);
-            AddToolButton(gridGo.transform, "Öffnung", openingTool);
-            AddToolButton(gridGo.transform, "Bohren", drillPlanner);
-            AddToolButton(gridGo.transform, "Distanz", distanceMeasurer);
-            AddToolButton(gridGo.transform, "Notiz", spatialNotes);
-            AddToolButton(gridGo.transform, "Ping", pingTester);
-            AddToolButton(gridGo.transform, "Löschen", deleteController, deleteStyle: true);
-            AddToolButton(gridGo.transform, "Ausrichten", scanAligner);
-            AddToolButton(gridGo.transform, "✕ Aus", null);
+            AddToolButton(gridGo.transform, "tool.room", roomTracer);
+            AddToolButton(gridGo.transform, "tool.opening", openingTool);
+            AddToolButton(gridGo.transform, "tool.drill", drillPlanner);
+            AddToolButton(gridGo.transform, "tool.distance", distanceMeasurer);
+            AddToolButton(gridGo.transform, "tool.note", spatialNotes);
+            AddToolButton(gridGo.transform, "tool.ping", pingTester);
+            AddToolButton(gridGo.transform, "tool.delete", deleteController, deleteStyle: true);
+            AddToolButton(gridGo.transform, "tool.align", scanAligner);
+            AddToolButton(gridGo.transform, "tool.off", null);
             AddUndoButton(gridGo.transform);
 
             _optionsRoot = new GameObject("ToolOptions", typeof(RectTransform));
@@ -155,6 +166,7 @@ namespace WifiScanner
 
         private void OnEnable()
         {
+            LocalizationManager.LanguageChanged += OnLanguageChanged;
             _posAction = new InputAction("PaletteRayPos", InputActionType.Value,
                 "<XRController>{RightHand}/pointerPosition", expectedControlType: "Vector3");
             _posAction.AddBinding("<XRController>{RightHand}/devicePosition"); // fallback
@@ -167,10 +179,24 @@ namespace WifiScanner
 
         private void OnDisable()
         {
+            LocalizationManager.LanguageChanged -= OnLanguageChanged;
             _posAction?.Disable();
             _rotAction?.Disable();
             CloseToolOptions();
             XrUiHover.Clear(this);
+        }
+
+        private void OnLanguageChanged()
+        {
+            if (_header != null)
+                _header.text = LocalizationManager.Get("tool.header").ToUpperInvariant();
+            foreach (Entry entry in _entries)
+                if (entry.label != null)
+                    entry.label.text = LocalizationManager.Get(entry.labelKey);
+            if (_undoLabel != null)
+                _undoLabel.text = LocalizationManager.Get("tool.undo");
+            if (_optionsTool != null) ShowToolOptions(_optionsTool);
+            if (_hint != null) _hint.text = BuildHint();
         }
 
         private void Update()
@@ -204,10 +230,10 @@ namespace WifiScanner
         }
 
         // One grid cell. A null tool is the "✕ Aus" button (deactivate all).
-        private void AddToolButton(Transform parent, string label,
+        private void AddToolButton(Transform parent, string labelKey,
             IExclusiveTool tool, bool deleteStyle = false)
         {
-            if (tool == null && label != "✕ Aus") return; // feature disabled
+            if (tool == null && labelKey != "tool.off") return; // feature disabled
             // Unity fake-null check for destroyed/missing components.
             if (tool is Object obj && obj == null) return;
 
@@ -235,12 +261,17 @@ namespace WifiScanner
                     Haptics.PlaceRight();
                 };
 
-            var text = UiBuilder.AddText(go.transform, label, 18f,
+            var text = UiBuilder.AddText(go.transform,
+                LocalizationManager.Get(labelKey), 18f,
                 FontStyles.Normal, TextAlignmentOptions.Center);
             UiBuilder.Stretch(text.rectTransform);
 
             if (tool != null)
-                _entries.Add(new Entry { tool = tool, image = img, deleteStyle = deleteStyle });
+                _entries.Add(new Entry { tool = tool, image = img, label = text,
+                    labelKey = labelKey, deleteStyle = deleteStyle });
+            else
+                _entries.Add(new Entry { tool = null, image = img, label = text,
+                    labelKey = labelKey, deleteStyle = deleteStyle });
         }
 
         private bool HasOptions(IExclusiveTool tool) =>
@@ -260,28 +291,32 @@ namespace WifiScanner
 
             if (ReferenceEquals(tool, openingTool))
             {
-                UiBuilder.AddHeader(_optionsRoot.transform, "Öffnung: Typ");
+                UiBuilder.AddHeader(_optionsRoot.transform,
+                    LocalizationManager.Get("tool.options.opening"));
                 UiBuilder.AddButtonRow(_optionsRoot.transform, out _optionImages,
-                    ("Tür", () => { openingTool.SetDoorMode(true); RefreshOptionColors(); }),
-                    ("Fenster", () => { openingTool.SetDoorMode(false); RefreshOptionColors(); }));
+                    (LocalizationManager.Get("tool.options.door"), () => { openingTool.SetDoorMode(true); RefreshOptionColors(); }),
+                    (LocalizationManager.Get("tool.options.window"), () => { openingTool.SetDoorMode(false); RefreshOptionColors(); }));
             }
             else if (ReferenceEquals(tool, spatialNotes))
             {
-                UiBuilder.AddHeader(_optionsRoot.transform, "Notiz: Typ");
+                UiBuilder.AddHeader(_optionsRoot.transform,
+                    LocalizationManager.Get("tool.options.note"));
                 UiBuilder.AddButtonRow(_optionsRoot.transform, out _optionImages,
                     ("AP", () => { spatialNotes.SetActiveType(0); RefreshOptionColors(); }),
-                    ("Störung", () => { spatialNotes.SetActiveType(1); RefreshOptionColors(); }),
-                    ("Text", () => { spatialNotes.SetActiveType(2); RefreshOptionColors(); }));
+                    (LocalizationManager.Get("tool.options.interference"), () => { spatialNotes.SetActiveType(1); RefreshOptionColors(); }),
+                    (LocalizationManager.Get("tool.options.text"), () => { spatialNotes.SetActiveType(2); RefreshOptionColors(); }));
             }
             else if (ReferenceEquals(tool, pingTester))
             {
-                UiBuilder.AddHeader(_optionsRoot.transform, "Ping: Host");
-                UiBuilder.AddTextField(_optionsRoot.transform, "Host oder IP",
+                UiBuilder.AddHeader(_optionsRoot.transform,
+                    LocalizationManager.Get("tool.options.ping"));
+                UiBuilder.AddTextField(_optionsRoot.transform,
+                    LocalizationManager.Get("tool.options.host"),
                     pingTester.host, null, value => pingTester.SetHost(value));
             }
 
             UiBuilder.AddButtonRow(_optionsRoot.transform,
-                ("Optionen schließen", CloseToolOptions));
+                (LocalizationManager.Get("tool.options.close"), CloseToolOptions));
             RefreshOptionColors();
         }
 
@@ -329,9 +364,10 @@ namespace WifiScanner
                 if (UndoStack.UndoLast())
                     Haptics.TickRight();
             });
-            var text = UiBuilder.AddText(go.transform, "↺ Undo", 18f,
+            _undoLabel = UiBuilder.AddText(go.transform,
+                LocalizationManager.Get("tool.undo"), 18f,
                 FontStyles.Normal, TextAlignmentOptions.Center);
-            UiBuilder.Stretch(text.rectTransform);
+            UiBuilder.Stretch(_undoLabel.rectTransform);
         }
 
         // Context help for whichever tool is active (moved here from the main
@@ -340,52 +376,32 @@ namespace WifiScanner
         private string BuildHint()
         {
             string hint = roomTracer != null && roomTracer.IsActive
-                ? "<color=#00dcff>Raum: Trigger=Ecke, B=fertig, A=zurück. " +
-                  "Fertige Räume: Ecke greifen = verschieben (gelb), " +
-                  "Boden anvisieren + Trigger halten = Höhe ziehen (orange)</color>"
+                ? LocalizationManager.Get("tool.hint.room")
                 : "";
             if (drillPlanner != null && drillPlanner.IsActive)
-                hint = "<color=#00dcff>Bohren: Wand/Boden/Decke anvisieren, " +
-                       "Trigger=Linie setzen, Stick hoch/runter=Bohrtiefe, " +
-                       "A=letzte Linie entfernen</color>";
+                hint = LocalizationManager.Get("tool.hint.drill");
             else if (deleteController != null && deleteController.IsActive)
-                hint = "<color=#FF6B6B>Löschen: Raum/Bohrung/Messung/Notiz/" +
-                       "Ping anvisieren (leuchtet auf), Trigger 2× = löschen</color>";
+                hint = LocalizationManager.Get("tool.hint.delete");
             else if (distanceMeasurer != null && distanceMeasurer.IsActive)
-                hint = "<color=#00dcff>Distanz: Trigger=Startpunkt, " +
-                       "wegbewegen, Trigger=Endpunkt. Mehrere Messungen " +
-                       "bleiben stehen</color>";
+                hint = LocalizationManager.Get("tool.hint.distance");
             else if (spatialNotes != null && spatialNotes.IsActive)
-                hint = "<color=#00dcff>Notiz: Trigger=setzen am Controller, " +
-                       "A=Typ wechseln; Palettenknopf halten = Typ wählen</color>";
+                hint = LocalizationManager.Get("tool.hint.note");
             else if (pingTester != null && pingTester.IsActive)
-                hint = "<color=#00dcff>Ping: Trigger=Knoten setzen & Latenz " +
-                       "messen; Palettenknopf halten = Host ändern</color>";
+                hint = LocalizationManager.Get("tool.hint.ping");
             else if (openingTool != null && openingTool.IsActive)
                 hint = openingTool.IsDoorMode
-                    ? "<color=#00dcff>Tür: Wand anvisieren, 1. Trigger = " +
-                      "Anschlagseite (obere Ecke, dort ist das Scharnier), " +
-                      "2. Trigger = Breite (Höhe bis Boden). A=Fenster, " +
-                      "halten = Typ wählen, B=zurück</color>"
-                    : "<color=#00dcff>Fenster: Wand anvisieren, 2× Trigger = " +
-                      "gegenüberliegende Ecken. A=Tür, halten = Typ wählen, " +
-                      "B=zurück</color>";
+                    ? LocalizationManager.Get("tool.hint.door")
+                    : LocalizationManager.Get("tool.hint.window");
             if (scanAligner != null && scanAligner.IsActive)
                 hint = scanAligner.CurrentPhase == ScanAligner.Phase.SelectWall
-                    ? "<color=#00dcff>Ausrichten: Wand des geladenen Scans " +
-                      "anvisieren, Trigger = wählen. Grüne Kugel = Anker-Ecke. " +
-                      "Keine Wand wählbar? Erst Raumhöhe ziehen. B = abbrechen</color>"
-                    : "<color=#00dcff>Ausrichten: LINKEN Controller an die " +
-                      "Stelle der grünen Ecke, RECHTEN entlang der Wand, beide " +
-                      "Grips halten, loslassen = übernehmen. B = zurück</color>";
+                    ? LocalizationManager.Get("tool.hint.align_select")
+                    : LocalizationManager.Get("tool.hint.align_place");
 
             if (hint.Length > 0) return hint;
             string undo = UndoStack.CanUndo
-                ? $"\n↺ macht rückgängig: {UndoStack.TopLabel}"
+                ? LocalizationManager.Format("tool.hint.undo", UndoStack.TopLabel)
                 : "";
-            return "<color=#777777>Werkzeug antippen (rechter Strahl). " +
-                   "Öffnung/Notiz/Ping halten = Optionen. " +
-                   $"A/B = Aufnahme/Export, solange kein Werkzeug aktiv.{undo}</color>";
+            return LocalizationManager.Format("tool.hint.idle", undo);
         }
 
         private void GetPointer(out Vector3 worldPos, out Vector3 worldFwd)

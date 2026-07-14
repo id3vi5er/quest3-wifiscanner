@@ -181,6 +181,20 @@ namespace WifiScanner
 
         private SampleCollector _collector;
         private float _autosaveTimer;
+        private const string AutosavePrefsKey = "wifi_autosave_enabled";
+
+        public bool AutosaveEnabled { get; private set; }
+
+        public void ToggleAutosave() => SetAutosaveEnabled(!AutosaveEnabled);
+
+        public void SetAutosaveEnabled(bool enabled)
+        {
+            AutosaveEnabled = enabled;
+            _autosaveTimer = 0f;
+            PlayerPrefs.SetInt(AutosavePrefsKey, enabled ? 1 : 0);
+            PlayerPrefs.Save();
+            Debug.Log($"[SceneBootstrap] Autosave -> {(enabled ? "AN" : "AUS")}");
+        }
 
         // Applies the inspector slider while tuning in Play Mode.
         private void OnValidate()
@@ -190,7 +204,9 @@ namespace WifiScanner
 
         private void Awake()
         {
+            LocalizationManager.Initialize();
             Haptics.GlobalStrength = hapticStrength;
+            AutosaveEnabled = PlayerPrefs.GetInt(AutosavePrefsKey, 1) != 0;
 
             // --- Point cloud renderer + runtime instanced material ---
             var cloudGo = new GameObject("WifiCloud");
@@ -515,7 +531,8 @@ namespace WifiScanner
                 roomMesh = gameObject.AddComponent<DynamicRoomMeshController>();
                 roomMesh.scanOnAtStart = roomScanOnAtStart;
                 roomMesh.meshVisibleAtStart = roomMeshVisibleAtStart;
-                roomMesh.Configure(depthCoordinator);
+                roomMesh.Configure(depthCoordinator, _collector, floor);
+                roomMesh.webServer = webServer;
                 _collector.dynamicRoomMesh = roomMesh;
             }
 
@@ -555,6 +572,7 @@ namespace WifiScanner
             {
                 var panel = gameObject.AddComponent<ControlPanel>();
                 panel.collector = _collector;
+                panel.bootstrap = this;
                 panel.cloud = cloud;
                 panel.floor = floor;
                 panel.modeController = vizMode;
@@ -640,7 +658,8 @@ namespace WifiScanner
 
         private void Update()
         {
-            if (autosaveInterval <= 0f || _collector == null || _collector.SampleCount == 0)
+            if (!AutosaveEnabled || autosaveInterval <= 0f || _collector == null ||
+                _collector.SampleCount == 0)
                 return;
 
             _autosaveTimer += Time.deltaTime;

@@ -273,7 +273,8 @@ namespace WifiScanner
         {
             if (i < 0 || i >= _measurements.Count) return;
             var snapshot = UndoStack.CloneMeasurements(_measurements);
-            UndoStack.Push("Messung gelöscht", () => LoadMeasurements(snapshot));
+            UndoStack.Push(LocalizationManager.Get("measurement.deleted_undo"),
+                () => LoadMeasurements(snapshot));
             Destroy(_visuals[i].root);
             _visuals.RemoveAt(i);
             _measurements.RemoveAt(i);

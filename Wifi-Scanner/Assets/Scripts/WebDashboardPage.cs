@@ -24,7 +24,7 @@ namespace WifiScanner
 <head>
 <meta charset='utf-8'>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
-<title>WiFi-Scanner Dashboard</title>
+<title data-i18n='page.title'>WiFi-Scanner Dashboard</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -63,6 +63,14 @@ namespace WifiScanner
   #btnPivot.active { background:#6d5122; border-color:#e0a03c; }
   #files a { display:block; font-size:12px; color:#6cc0ff; text-decoration:none;
              padding:2px 0; word-break:break-all; }
+  #files details { margin:5px 0; border:1px solid #303744; border-radius:6px;
+                   background:#11151c; overflow:hidden; }
+  #files summary { padding:6px 7px; cursor:pointer; font-size:12px; color:#d5dbe5;
+                   background:#1c222c; user-select:none; }
+  #files .groupmeta { color:#7f8998; font-size:10px; margin-left:4px; }
+  #files .groupbody { padding:4px 7px 6px; }
+  #exportStatus { font-size:11px; line-height:1.4; color:#8fd4ff; margin:3px 0 5px; }
+  #btnExport:disabled { opacity:.65; cursor:wait; }
   #speedStatus { font-size:11px; line-height:1.4; color:#8fd4ff; margin:4px 0; }
   .sz { color:#6b7280; }
 
@@ -91,68 +99,70 @@ namespace WifiScanner
 </head>
 <body>
 <div id='toolbar'>
-  <h1>WiFi-Scanner</h1>
+  <h1 data-i18n='app.title'>WiFi-Scanner</h1>
   <select id='mode'>
-    <option value='points'>Messpunkte</option>
-    <option value='heat'>Heatmap</option>
-    <option value='forecast'>Prognose</option>
-    <option value='3d'>3D-R&auml;ume</option>
+    <option value='points' data-i18n='mode.points'>Messpunkte</option>
+    <option value='heat' data-i18n='mode.heat'>Heatmap</option>
+    <option value='forecast' data-i18n='mode.forecast'>Prognose</option>
+    <option value='3d' data-i18n='mode.rooms3d'>3D-R&auml;ume</option>
+    <option value='mesh' data-i18n='mode.mesh'>Live-Raummesh</option>
   </select>
-  <select id='floor'><option value='all'>Etage: Alle</option></select>
-  <select id='ap'><option value='all'>AP: Alle</option></select>
+  <select id='floor'><option value='all' data-i18n='floor.all'>Etage: Alle</option></select>
+  <select id='ap'><option value='all' data-i18n='ap.all'>AP: Alle</option></select>
   <span id='legendbox'>
-    <input type='number' id='lgWeak' value='-90' step='5' title='schwach (dBm)'>
+    <input type='number' id='lgWeak' value='-90' step='5' title='schwach (dBm)' data-i18n-title='legend.weak'>
     <canvas id='legendbar' width='110' height='12'></canvas>
-    <input type='number' id='lgStrong' value='-40' step='5' title='stark (dBm)'>
+    <input type='number' id='lgStrong' value='-40' step='5' title='stark (dBm)' data-i18n-title='legend.strong'>
     <span class='lg'>dBm</span>
   </span>
-  <button id='btnLayers'>&#9776; Ebenen</button>
-  <button id='btnFiles'>&#8681; Dateien</button>
-  <button id='btnCompare'>&#8646; Vergleich</button>
-  <span id='status'><span class='dot' style='background:#c0392b'></span>getrennt</span>
+  <button id='btnLayers' data-i18n='button.layers'>&#9776; Ebenen</button>
+  <button id='btnFiles' data-i18n='button.files'>&#8681; Dateien</button>
+  <button id='btnCompare' data-i18n='button.compare'>&#8646; Vergleich</button>
+  <span id='status'><span class='dot' style='background:#c0392b'></span><span data-i18n='status.disconnected'>getrennt</span></span>
 </div>
 
 <div id='stage'>
   <canvas id='c'></canvas>
   <div id='divider'></div>
-  <span class='divlabel' id='lblBefore' style='left:8px'>Vorher (Scan)</span>
-  <span class='divlabel' id='lblAfter' style='right:8px'>Jetzt (live)</span>
+  <span class='divlabel' id='lblBefore' style='left:8px' data-i18n='compare.before'>Vorher (Scan)</span>
+  <span class='divlabel' id='lblAfter' style='right:8px' data-i18n='compare.now'>Jetzt (live)</span>
   <div id='popup'></div>
 
   <div class='panel' id='layers'>
-    <h2>Ebenen</h2>
-    <label><input type='checkbox' id='l_points' checked> Messpunkte</label>
-    <label><input type='checkbox' id='l_trail' checked> Laufpfad</label>
-    <label><input type='checkbox' id='l_rooms' checked> R&auml;ume</label>
-    <label><input type='checkbox' id='l_pose' checked> Position</label>
-    <label><input type='checkbox' id='l_ap' checked> AP-Standorte</label>
-    <label><input type='checkbox' id='l_ping' checked> Pings</label>
-    <label><input type='checkbox' id='l_throughput' checked> Durchsatz</label>
-    <label><input type='checkbox' id='l_notes' checked> Notizen</label>
-    <label><input type='checkbox' id='l_roam' checked> Roaming</label>
-    <h2>Statistik</h2>
+    <h2 data-i18n='layers.title'>Ebenen</h2>
+    <label><input type='checkbox' id='l_points' checked> <span data-i18n='layers.points'>Messpunkte</span></label>
+    <label><input type='checkbox' id='l_trail' checked> <span data-i18n='layers.trail'>Laufpfad</span></label>
+    <label><input type='checkbox' id='l_rooms' checked> <span data-i18n='layers.rooms'>R&auml;ume</span></label>
+    <label><input type='checkbox' id='l_pose' checked> <span data-i18n='layers.position'>Position</span></label>
+    <label><input type='checkbox' id='l_ap' checked> <span data-i18n='layers.ap'>AP-Standorte</span></label>
+    <label><input type='checkbox' id='l_ping' checked> <span data-i18n='layers.pings'>Pings</span></label>
+    <label><input type='checkbox' id='l_throughput' checked> <span data-i18n='layers.throughput'>Durchsatz</span></label>
+    <label><input type='checkbox' id='l_notes' checked> <span data-i18n='layers.notes'>Notizen</span></label>
+    <label><input type='checkbox' id='l_roam' checked> <span data-i18n='layers.roaming'>Roaming</span></label>
+    <h2 data-i18n='stats.title'>Statistik</h2>
     <div id='stats' style='font-size:12px;color:#aeb6c4;white-space:pre-line'></div>
   </div>
 
   <div class='panel' id='drawer'>
-    <h2>Vergleichs-Scan (vorher)</h2>
-    <select id='cmpScan'><option value=''>&ndash; Scan w&auml;hlen &ndash;</option></select>
+    <h2 data-i18n='compare.scan'>Vergleichs-Scan (vorher)</h2>
+    <select id='cmpScan'><option value='' data-i18n='compare.choose'>&ndash; Scan w&auml;hlen &ndash;</option></select>
     <div id='alignControls' style='display:none'>
-      <div id='alignStatus'>Noch nicht ausgerichtet</div>
+      <div id='alignStatus' data-i18n='align.none'>Noch nicht ausgerichtet</div>
       <div class='alignrow'><span>X</span><input id='alignX' type='range' min='-20' max='20' step='0.05' value='0'><output id='alignXOut'>0,00 m</output></div>
       <div class='alignrow'><span>Z</span><input id='alignZ' type='range' min='-20' max='20' step='0.05' value='0'><output id='alignZOut'>0,00 m</output></div>
-      <div class='alignrow'><span>Winkel</span><input id='alignYaw' type='range' min='-180' max='180' step='0.1' value='0'><output id='alignYawOut'>0,0&deg;</output></div>
-      <button id='btnAutoAlign'>Automatisch ausrichten</button>
-      <button id='btnPivot'>Drehpunkt im Plan setzen</button>
-      <button id='btnResetAlign'>Ausrichtung zur&uuml;cksetzen</button>
+      <div class='alignrow'><span data-i18n='align.angle'>Winkel</span><input id='alignYaw' type='range' min='-180' max='180' step='0.1' value='0'><output id='alignYawOut'>0,0&deg;</output></div>
+      <button id='btnAutoAlign' data-i18n='align.auto'>Automatisch ausrichten</button>
+      <button id='btnPivot' data-i18n='align.pivot'>Drehpunkt im Plan setzen</button>
+      <button id='btnResetAlign' data-i18n='align.reset'>Ausrichtung zur&uuml;cksetzen</button>
     </div>
-    <h2>Aktionen</h2>
-    <button id='btnExport'>Aktuellen Scan exportieren</button>
-    <button id='btnSpeed'>Durchsatz hier messen</button>
-    <div id='speedStatus'>Browser dient als lokale Gegenstelle.</div>
-    <button id='btnReport'>Report &ouml;ffnen</button>
-    <button id='btnZip'>Alle als ZIP laden</button>
-    <h2><button id='btnFileList' style='width:100%'>Dateien anzeigen &#9656;</button></h2>
+    <h2 data-i18n='actions.title'>Aktionen</h2>
+    <button id='btnExport' data-i18n='actions.export'>Aktuellen Scan exportieren</button>
+    <div id='exportStatus'></div>
+    <button id='btnSpeed' data-i18n='actions.speed'>Durchsatz hier messen</button>
+    <div id='speedStatus' data-i18n='speed.peer'>Browser dient als lokale Gegenstelle.</div>
+    <button id='btnReport' data-i18n='actions.report'>Report &ouml;ffnen</button>
+    <button id='btnZip' data-i18n='actions.zip'>Alle als ZIP laden</button>
+    <h2><button id='btnFileList' style='width:100%' data-i18n='files.show'>Dateien anzeigen &#9656;</button></h2>
     <div id='files' style='display:none'></div>
   </div>
 </div>
@@ -160,9 +170,146 @@ namespace WifiScanner
 <div id='timeline'><canvas id='tl'></canvas></div>
 
 <script>
+// ---------- localization ----------
+const I18N = {
+  de: {
+    'page.title':'WiFi-Scanner Dashboard', 'app.title':'WiFi-Scanner',
+    'mode.points':'Messpunkte', 'mode.heat':'Heatmap', 'mode.forecast':'Prognose',
+    'mode.rooms3d':'3D-R\u00e4ume', 'mode.mesh':'Live-Raummesh',
+    'mesh.empty':'Noch kein Raummesh empfangen \u2026',
+    'orbit.help':'Ziehen = drehen, Rad/Pinch = Zoom',
+    'mesh.triangles':'{0} Live-Dreiecke',
+    'floor.all':'Etage: Alle', 'floor.value':'Etage: {0}',
+    'floor.fallback':'Etage {0}', 'ap.all':'AP: Alle',
+    'legend.weak':'schwach (dBm)', 'legend.strong':'stark (dBm)',
+    'button.layers':'\u2630 Ebenen', 'button.files':'\u21e9 Dateien',
+    'button.compare':'\u21c6 Vergleich', 'status.connected':'live',
+    'status.disconnected':'getrennt', 'compare.before':'Vorher (Scan)',
+    'compare.now':'Jetzt (live)', 'layers.title':'Ebenen',
+    'layers.points':'Messpunkte', 'layers.trail':'Laufpfad', 'layers.rooms':'R\u00e4ume',
+    'layers.position':'Position', 'layers.ap':'AP-Standorte', 'layers.pings':'Pings',
+    'layers.throughput':'Durchsatz', 'layers.notes':'Notizen', 'layers.roaming':'Roaming',
+    'stats.title':'Statistik', 'compare.scan':'Vergleichs-Scan (vorher)',
+    'compare.choose':'\u2013 Scan w\u00e4hlen \u2013', 'align.none':'Noch nicht ausgerichtet',
+    'align.angle':'Winkel', 'align.auto':'Automatisch ausrichten',
+    'align.pivot':'Drehpunkt im Plan setzen', 'align.pivot_pick':'Punkt im linken Plan anklicken \u2026',
+    'align.reset':'Ausrichtung zur\u00fccksetzen', 'align.manual':'manuell',
+    'align.manual_pivot':'manuell \u00b7 eigener Drehpunkt',
+    'align.auto_rooms':'automatisch \u00b7 Raumkanten',
+    'align.auto_area':'automatisch \u00b7 Messfl\u00e4che',
+    'align.waiting_live':'wartet auf Live-Daten', 'align.saved':'gespeichert',
+    'align.wall_error':' \u00b7 Wandfehler \u00d8 {0} m',
+    'actions.title':'Aktionen', 'actions.export':'Aktuellen Scan exportieren',
+    'actions.speed':'Durchsatz hier messen', 'speed.peer':'Browser dient als lokale Gegenstelle.',
+    'actions.report':'Report \u00f6ffnen', 'actions.zip':'Alle als ZIP laden',
+    'files.show':'Dateien anzeigen \u25b8', 'files.hide':'Dateien verbergen \u25be',
+    'report.none':'Noch kein Report \u2013 erst exportieren.',
+    'scan.load_failed':'Scan konnte nicht geladen werden.', 'speed.ping_failed':'Ping fehlgeschlagen',
+    'speed.down_failed':'Quest\u2192Browser fehlgeschlagen',
+    'speed.up_failed':'Browser\u2192Quest fehlgeschlagen',
+    'speed.down_running':'Quest \u2192 Browser wird gemessen \u2026',
+    'speed.up_running':'Browser \u2192 Quest wird gemessen \u2026',
+    'speed.failed':'Durchsatztest fehlgeschlagen: {0}',
+    'forecast.draw_rooms':'Prognose: erst R\u00e4ume zeichnen',
+    'forecast.no_ap':'Kein AP: virtuellen AP setzen (Notiz) oder messen',
+    'common.error':'Fehler', 'popup.point':'Messpunkt', 'popup.floor':'Etage {0}',
+    'popup.note':'Notiz', 'popup.ping':'Ping-Knoten', 'popup.latency':'Latenz',
+    'popup.throughput':'Lokaler Durchsatz', 'popup.roaming':'Roaming',
+    'timeline.empty':'Aufnahmeverlauf erscheint mit den ersten Messpunkten \u2026',
+    'timeline.summary':'RSSI {0} dBm \u00b7 {1} Punkte \u00b7 {2} Roaming \u00b7 {3} Ausf\u00e4lle',
+    'stats.summary':'Punkte: {0} (angezeigt {1})\nR\u00e4ume: {2}   Pings: {3}   Speed: {4}\nNotizen: {5}   APs: {6}   Roaming: {7}',
+    'stats.compare':'\nVergleich: {0}', 'stats.last':'\nLetzte: {0} dBm',
+    'export.start':'Export wird gestartet \u2026', 'export.wait':'Export wartet \u2026',
+    'export.running':'Export l\u00e4uft (inklusive Raummesh) \u2026',
+    'export.done':'Export abgeschlossen.', 'export.status_failed':'Exportstatus nicht erreichbar',
+    'export.unknown':'Unbekannter Exportfehler', 'export.timeout':'Zeitlimit nach 3 Minuten erreicht',
+    'export.failed':'Export fehlgeschlagen: {0}', 'files.other':'Sonstige Dateien',
+    'files.meta':'{0} Dateien, {1} MB', 'files.none':'(keine Dateien)'
+  },
+  en: {
+    'page.title':'WiFi Scanner Dashboard', 'app.title':'WiFi Scanner',
+    'mode.points':'Measurement points', 'mode.heat':'Heatmap', 'mode.forecast':'Forecast',
+    'mode.rooms3d':'3D rooms', 'mode.mesh':'Live room mesh',
+    'mesh.empty':'No room mesh received yet \u2026',
+    'orbit.help':'Drag to rotate, wheel/pinch to zoom',
+    'mesh.triangles':'{0} live triangles',
+    'floor.all':'Floor: All', 'floor.value':'Floor: {0}',
+    'floor.fallback':'Floor {0}', 'ap.all':'AP: All',
+    'legend.weak':'weak (dBm)', 'legend.strong':'strong (dBm)',
+    'button.layers':'\u2630 Layers', 'button.files':'\u21e9 Files',
+    'button.compare':'\u21c6 Compare', 'status.connected':'live',
+    'status.disconnected':'disconnected', 'compare.before':'Before (scan)',
+    'compare.now':'Now (live)', 'layers.title':'Layers',
+    'layers.points':'Measurement points', 'layers.trail':'Walking trail', 'layers.rooms':'Rooms',
+    'layers.position':'Position', 'layers.ap':'AP locations', 'layers.pings':'Pings',
+    'layers.throughput':'Throughput', 'layers.notes':'Notes', 'layers.roaming':'Roaming',
+    'stats.title':'Statistics', 'compare.scan':'Reference scan (before)',
+    'compare.choose':'\u2013 Choose scan \u2013', 'align.none':'Not aligned yet',
+    'align.angle':'Angle', 'align.auto':'Align automatically',
+    'align.pivot':'Set pivot on map', 'align.pivot_pick':'Click a point on the left map \u2026',
+    'align.reset':'Reset alignment', 'align.manual':'manual',
+    'align.manual_pivot':'manual \u00b7 custom pivot',
+    'align.auto_rooms':'automatic \u00b7 room edges',
+    'align.auto_area':'automatic \u00b7 measurement area',
+    'align.waiting_live':'waiting for live data', 'align.saved':'saved',
+    'align.wall_error':' \u00b7 mean wall error {0} m',
+    'actions.title':'Actions', 'actions.export':'Export current scan',
+    'actions.speed':'Measure throughput here', 'speed.peer':'Browser acts as the local peer.',
+    'actions.report':'Open report', 'actions.zip':'Download all as ZIP',
+    'files.show':'Show files \u25b8', 'files.hide':'Hide files \u25be',
+    'report.none':'No report yet \u2013 export first.',
+    'scan.load_failed':'Could not load scan.', 'speed.ping_failed':'Ping failed',
+    'speed.down_failed':'Quest\u2192browser failed', 'speed.up_failed':'Browser\u2192Quest failed',
+    'speed.down_running':'Measuring Quest \u2192 browser \u2026',
+    'speed.up_running':'Measuring browser \u2192 Quest \u2026',
+    'speed.failed':'Throughput test failed: {0}',
+    'forecast.draw_rooms':'Forecast: draw rooms first',
+    'forecast.no_ap':'No AP: place a virtual AP note or take measurements',
+    'common.error':'Error', 'popup.point':'Measurement point', 'popup.floor':'Floor {0}',
+    'popup.note':'Note', 'popup.ping':'Ping node', 'popup.latency':'Latency',
+    'popup.throughput':'Local throughput', 'popup.roaming':'Roaming',
+    'timeline.empty':'Recording history appears with the first measurement points \u2026',
+    'timeline.summary':'RSSI {0} dBm \u00b7 {1} points \u00b7 {2} roaming \u00b7 {3} outages',
+    'stats.summary':'Points: {0} (shown {1})\nRooms: {2}   Pings: {3}   Speed: {4}\nNotes: {5}   APs: {6}   Roaming: {7}',
+    'stats.compare':'\nReference: {0}', 'stats.last':'\nLatest: {0} dBm',
+    'export.start':'Starting export \u2026', 'export.wait':'Export queued \u2026',
+    'export.running':'Export running (including room mesh) \u2026',
+    'export.done':'Export complete.', 'export.status_failed':'Export status unavailable',
+    'export.unknown':'Unknown export error', 'export.timeout':'Timed out after 3 minutes',
+    'export.failed':'Export failed: {0}', 'files.other':'Other files',
+    'files.meta':'{0} files, {1} MB', 'files.none':'(no files)'
+  }
+};
+let language = 'de';
+function t(key, ...args) {
+  let value = (I18N[language] && I18N[language][key]) || I18N.de[key] || key;
+  args.forEach((arg, index) => { value = value.replaceAll('{' + index + '}', arg); });
+  return value;
+}
+function applyLanguage(code) {
+  language = code === 'en' ? 'en' : 'de';
+  document.documentElement.lang = language;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.innerHTML = t(el.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+  const fileBox = document.getElementById('files');
+  document.getElementById('btnFileList').innerHTML =
+    fileBox.style.display === 'block' ? t('files.hide') : t('files.show');
+  renderConnectionStatus();
+  relabelFloorOptions();
+  updateAlignUi();
+  updateStats(S.points.length);
+  draw();
+  drawTimeline();
+}
+
 // ---------- state ----------
 const S = { points:[], pose:null, rooms:[], apfix:null, apfixAll:null, pings:[],
-            notes:[], drills:[], trail:[], roams:[], throughput:[] };
+            notes:[], drills:[], trail:[], roams:[], throughput:[],
+            roommesh:{ v:[], c:[], triangles:0 } };
 const S2 = { points:[], rooms:[], loaded:false, stem:'', gridYaw:0,
   hasGridYaw:false, alignX:0, alignZ:0, alignYaw:0, pivotX:0, pivotZ:0,
   error:null, alignmentSource:'', needsAuto:false }; // Vergleich (vorher)
@@ -182,6 +329,7 @@ let floorBases = [], floorLabels = []; // Etagen (aus dem rooms-Paket)
 const hist = [];        // {t, r} RSSI-Verlauf (Ankunftszeit)
 const outages = [];     // {a, b} WS-Ausf&auml;lle
 let outageStart = 0;
+let wsConnected = false;
 
 const cv = document.getElementById('c');
 const cx = cv.getContext('2d');
@@ -221,9 +369,7 @@ document.getElementById('btnCompare').addEventListener('click', e => {
   updateCompareUi();
   draw();
 });
-document.getElementById('btnExport').addEventListener('click', () => {
-  fetch('/export').then(() => setTimeout(loadFiles, 2000));
-});
+document.getElementById('btnExport').addEventListener('click', startExport);
 document.getElementById('btnSpeed').addEventListener('click', () => runSpeedTest());
 document.getElementById('btnZip').addEventListener('click', () => { location.href = '/download-all'; });
 document.getElementById('btnReport').addEventListener('click', () => {
@@ -233,7 +379,7 @@ document.getElementById('btnReport').addEventListener('click', () => {
       f.name.endsWith('_report.html') && f.name !== 'wifi_autosave_report.html')
       .sort((a, b) => (b.modified || 0) - (a.modified || 0));
     if (reps.length) window.open('/download?f=' + encodeURIComponent(reps[0].name), '_blank');
-    else alert('Noch kein Report - erst exportieren.');
+    else alert(t('report.none'));
   }).catch(() => {});
 });
 document.getElementById('btnFileList').addEventListener('click', () => {
@@ -241,7 +387,7 @@ document.getElementById('btnFileList').addEventListener('click', () => {
   const show = box.style.display !== 'block';
   box.style.display = show ? 'block' : 'none';
   document.getElementById('btnFileList').innerHTML =
-    show ? 'Dateien verbergen &#9662;' : 'Dateien anzeigen &#9656;';
+    show ? t('files.hide') : t('files.show');
   if (show) loadFiles();
 });
 document.getElementById('cmpScan').addEventListener('change', e => loadCompare(e.target.value));
@@ -251,7 +397,7 @@ document.getElementById('cmpScan').addEventListener('change', e => loadCompare(e
     S2.alignZ = parseFloat(document.getElementById('alignZ').value) || 0;
     S2.alignYaw = (parseFloat(document.getElementById('alignYaw').value) || 0) * Math.PI / 180;
     S2.needsAuto = false;
-    S2.alignmentSource = 'manuell';
+  S2.alignmentSource = 'align.manual';
     updateAlignmentError();
     updateAlignUi();
     saveAlignment();
@@ -267,7 +413,7 @@ document.getElementById('btnResetAlign').addEventListener('click', () => {
 document.getElementById('btnPivot').addEventListener('click', e => {
   pivotPick = !pivotPick;
   e.target.classList.toggle('active', pivotPick);
-  e.target.textContent = pivotPick ? 'Punkt im linken Plan anklicken …' : 'Drehpunkt im Plan setzen';
+  e.target.textContent = pivotPick ? t('align.pivot_pick') : t('align.pivot');
 });
 
 function updateCompareUi() {
@@ -312,7 +458,7 @@ function loadCompare(name) {
         }
         finishCompareLoad();
       }).catch(() => { S2.rooms = []; finishCompareLoad(); });
-  }).catch(() => alert('Scan konnte nicht geladen werden.'));
+  }).catch(() => alert(t('scan.load_failed')));
 }
 
 function finishCompareLoad() {
@@ -344,7 +490,7 @@ async function speedPing() {
     const t = performance.now();
     const r = await fetch('/speed/ping?n=' + Date.now() + '-' + i,
       { cache:'no-store' });
-    if (!r.ok) throw new Error('Ping fehlgeschlagen');
+    if (!r.ok) throw new Error(t('speed.ping_failed'));
     await r.arrayBuffer();
     if (i > 0) values.push(performance.now() - t); // first request warms TCP
   }
@@ -355,7 +501,7 @@ async function speedDown(id, bytes, parallel) {
   const data = await Promise.all(Array.from({length:parallel}, (_, i) =>
     fetch('/speed/down?id=' + encodeURIComponent(id) + '&bytes=' + bytes +
       '&n=' + Date.now() + '-' + i, {cache:'no-store'}).then(async r => {
-        if (!r.ok) throw new Error('Quest→Browser fehlgeschlagen');
+        if (!r.ok) throw new Error(t('speed.down_failed'));
         return (await r.arrayBuffer()).byteLength;
       })));
   const ms = performance.now() - t;
@@ -368,7 +514,7 @@ async function speedUp(id, bytes, parallel) {
     fetch('/speed/up?id=' + encodeURIComponent(id) + '&n=' + i, {
       method:'POST', cache:'no-store', headers:{'Content-Type':'application/octet-stream'},
       body:payload
-    }).then(r => { if (!r.ok) throw new Error('Browser→Quest fehlgeschlagen'); return r.json(); })));
+    }).then(r => { if (!r.ok) throw new Error(t('speed.up_failed')); return r.json(); })));
   const ms = performance.now() - t;
   return { ms, mbps:bytes * parallel * 8 / ms / 1000 };
 }
@@ -393,11 +539,11 @@ async function runSpeedTest(requestId) {
     // Warm-up removes connection setup/JIT effects from the measured rounds.
     await speedDown(id, 256 * 1024, 2);
     await speedUp(id, 256 * 1024, 2);
-    setSpeedStatus(generation, 'Quest → Browser wird gemessen …');
+    setSpeedStatus(generation, t('speed.down_running'));
     let down = await speedDown(id, 4 * 1024 * 1024, 4);
     if (down.ms < 900) down = await speedDown(id, 8 * 1024 * 1024, 4);
     if (down.ms < 900) down = await speedDown(id, 16 * 1024 * 1024, 4);
-    setSpeedStatus(generation, 'Browser → Quest wird gemessen …');
+    setSpeedStatus(generation, t('speed.up_running'));
     let up = await speedUp(id, 4 * 1024 * 1024, 4);
     if (up.ms < 900) up = await speedUp(id, 8 * 1024 * 1024, 4);
     if (up.ms < 900) up = await speedUp(id, 16 * 1024 * 1024, 4);
@@ -410,7 +556,7 @@ async function runSpeedTest(requestId) {
       ' Mbit/s · Browser → Quest: ' + up.mbps.toFixed(1) +
       ' Mbit/s · ' + latency.toFixed(0) + ' ms');
   } catch (e) {
-    setSpeedStatus(generation, 'Durchsatztest fehlgeschlagen: ' + e.message);
+    setSpeedStatus(generation, t('speed.failed', e.message));
   } finally {
     if (generation === speedGeneration) {
       speedRunning = false; btn.disabled = false;
@@ -513,7 +659,7 @@ function autoAlignReference() {
   const sets = alignmentSets();
   if (!sets.live.length || !sets.ref.length) {
     S2.needsAuto = true;
-    S2.alignmentSource = 'wartet auf Live-Daten';
+    S2.alignmentSource = 'align.waiting_live';
     updateAlignUi();
     return;
   }
@@ -544,7 +690,7 @@ function autoAlignReference() {
   S2.alignYaw = best.yaw;
   S2.alignX = best.tx;
   S2.alignZ = best.tz;
-  S2.alignmentSource = sets.rooms ? 'automatisch · Raumkanten' : 'automatisch · Messfläche';
+  S2.alignmentSource = sets.rooms ? 'align.auto_rooms' : 'align.auto_area';
   updateAlignmentError();
   updateAlignUi();
 }
@@ -561,7 +707,7 @@ function resetReferenceAlignment() {
   S2.needsAuto = false;
   setReferencePivot();
   S2.error = null;
-  S2.alignmentSource = 'Quest-Raster, ohne Feinabgleich';
+  S2.alignmentSource = 'align.none';
   updateAlignUi();
 }
 function alignmentKey() { return 'wifi-align:' + S2.stem; }
@@ -589,7 +735,7 @@ function loadAlignment() {
         Math.abs(live[2] - a.live[2]) > 0.035) return false;
     S2.alignX = a.x; S2.alignZ = a.z; S2.alignYaw = a.yaw;
     S2.pivotX = a.px; S2.pivotZ = a.pz;
-    S2.alignmentSource = a.source || 'gespeichert';
+    S2.alignmentSource = a.source || 'align.saved';
     updateAlignmentError();
     return true;
   } catch (e) { return false; }
@@ -608,25 +754,33 @@ function updateAlignUi() {
   document.getElementById('alignZOut').textContent = S2.alignZ.toFixed(2).replace('.', ',') + ' m';
   document.getElementById('alignYawOut').textContent =
     (S2.alignYaw * 180 / Math.PI).toFixed(1).replace('.', ',') + '°';
-  const err = S2.error == null ? '' : ' · Wandfehler Ø ' +
-    S2.error.toFixed(2).replace('.', ',') + ' m';
-  document.getElementById('alignStatus').textContent =
-    (S2.alignmentSource || 'nicht ausgerichtet') + err;
+  const err = S2.error == null ? '' : t('align.wall_error',
+    S2.error.toFixed(2).replace('.', language === 'de' ? ',' : '.'));
+  let source = S2.alignmentSource || 'align.none';
+  if (source.startsWith('align.')) source = t(source);
+  document.getElementById('alignStatus').textContent = source + err;
 }
 
 // ---------- websocket ----------
 function connect() {
   const ws = new WebSocket('ws://' + location.host + '/ws');
   ws.onopen = () => {
-    statusEl.innerHTML = `<span class='dot' style='background:#27ae60'></span>live`;
+    wsConnected = true;
+    renderConnectionStatus();
     if (outageStart) { outages.push({ a: outageStart, b: Date.now() }); outageStart = 0; }
   };
   ws.onclose = () => {
-    statusEl.innerHTML = `<span class='dot' style='background:#c0392b'></span>getrennt`;
+    wsConnected = false;
+    renderConnectionStatus();
     if (!outageStart) outageStart = Date.now();
     setTimeout(connect, 1500);
   };
   ws.onmessage = ev => { try { handle(JSON.parse(ev.data)); } catch (e) {} };
+}
+
+function renderConnectionStatus() {
+  statusEl.innerHTML = `<span class='dot' style='background:${wsConnected ? '#27ae60' : '#c0392b'}'></span>` +
+    t(wsConnected ? 'status.connected' : 'status.disconnected');
 }
 
 function handle(m) {
@@ -640,6 +794,7 @@ function handle(m) {
     }
   }
   switch (m.type) {
+    case 'language': applyLanguage(m.language); break;
     case 'speed_request': runSpeedTest(m.requestId); break;
     case 'samplebatch': (m.items || []).forEach(addPoint); break;
     case 'pose': {
@@ -668,6 +823,9 @@ function handle(m) {
     case 'drill': S.drills = m.lines || []; break;
     case 'roam': S.roams = m.events || []; break;
     case 'throughput': S.throughput = m.nodes || []; break;
+    case 'roommesh': S.roommesh = {
+      v: m.v || [], c: m.c || [], triangles: m.triangles || 0
+    }; break;
     case 'clear': resetDashboardSession(); break;
   }
   draw();
@@ -680,20 +838,21 @@ function resetDashboardSession() {
   S.points = []; S.pose = null; S.rooms = []; S.apfix = null; S.apfixAll = null;
   S.pings = []; S.notes = []; S.drills = []; S.trail = []; S.roams = [];
   S.throughput = [];
+  S.roommesh = { v:[], c:[], triangles:0 };
   S2.points = []; S2.rooms = []; S2.loaded = false; S2.stem = '';
   S2.alignX = S2.alignZ = S2.alignYaw = 0; S2.error = null;
   compareOn = false; pivotPick = false; selected = null;
   hist.length = 0; outages.length = 0; outageStart = 0;
   floorsSeen.clear(); apsSeen.clear(); floorBases = []; floorLabels = [];
   floorSel = 'all'; apSel = 'all'; gridYaw = 0;
-  document.getElementById('floor').innerHTML = `<option value='all'>Etage: Alle</option>`;
-  document.getElementById('ap').innerHTML = `<option value='all'>AP: Alle</option>`;
+  document.getElementById('floor').innerHTML = `<option value='all'>${t('floor.all')}</option>`;
+  document.getElementById('ap').innerHTML = `<option value='all'>${t('ap.all')}</option>`;
   document.getElementById('cmpScan').value = '';
   document.getElementById('alignControls').style.display = 'none';
   document.getElementById('btnCompare').classList.remove('active');
   document.getElementById('btnPivot').classList.remove('active');
-  document.getElementById('btnPivot').textContent = 'Drehpunkt im Plan setzen';
-  document.getElementById('speedStatus').textContent = 'Browser dient als lokale Gegenstelle.';
+  document.getElementById('btnPivot').textContent = t('align.pivot');
+  document.getElementById('speedStatus').textContent = t('speed.peer');
   popupEl.style.display = 'none';
   fcCanvas = null; fcKey = '';
   updateCompareUi();
@@ -713,13 +872,21 @@ function floorIndexForY(y) {
     if (y >= floorBases[i] - 0.5) idx = i;
   return idx;
 }
+function displayFloorLabel(label) {
+  if (language !== 'en' || !label) return label;
+  if (label === 'EG') return 'GF';
+  if (/^OG\d+$/.test(label)) return label.slice(2) + 'F';
+  if (/^UG\d+$/.test(label)) return 'B' + label.slice(2);
+  return label;
+}
 function floorName(f) {
-  return floorLabels[f] !== undefined ? floorLabels[f] : 'Etage ' + (f + 1);
+  return floorLabels[f] !== undefined
+    ? displayFloorLabel(floorLabels[f]) : t('floor.fallback', f + 1);
 }
 function relabelFloorOptions() {
   document.querySelectorAll(`#floor option`).forEach(o => {
     if (o.value !== 'all') o.textContent = floorName(parseInt(o.value));
-    else o.textContent = 'Etage: Alle';
+    else o.textContent = t('floor.all');
   });
 }
 // Nur Räume der gewählten Etage (kein Etagenwissen -> alle zeigen).
@@ -833,6 +1000,12 @@ function draw() {
     updateStats(pts.length);
     return;
   }
+  if (mode === 'mesh') {
+    cx.clearRect(0, 0, cv.width, cv.height);
+    drawRoomMesh();
+    updateStats(pts.length);
+    return;
+  }
   computeTransform(pts);
   cx.clearRect(0, 0, cv.width, cv.height);
 
@@ -939,7 +1112,7 @@ function forecastKey() {
 }
 function drawForecast() {
   if (!S.rooms.length) {
-    label('Prognose: erst Räume zeichnen', cv.width / 2, 24, '#e0a03c');
+    label(t('forecast.draw_rooms'), cv.width / 2, 24, '#e0a03c');
     return;
   }
   const key = forecastKey();
@@ -947,7 +1120,7 @@ function drawForecast() {
   if (fcCanvas) cx.drawImage(fcCanvas, 0, 0);
   const hasAp = (S.notes || []).some(n => n.type === 'VirtualAp') || S.apfix;
   if (!hasAp)
-    label('Kein AP: virtuellen AP setzen (Notiz) oder messen', cv.width / 2, 24, '#ff5544');
+    label(t('forecast.no_ap'), cv.width / 2, 24, '#ff5544');
 }
 function renderForecast() {
   fcCanvas = document.createElement('canvas');
@@ -1109,7 +1282,7 @@ function drawPing(p) {
   const ms = p.latencyMs;
   cx.fillStyle = ms < 0 ? '#cc2222' : ms < 50 ? '#22bb44' : ms < 120 ? '#e6b800' : '#cc5522';
   cx.beginPath(); cx.arc(q[0], q[1], 6, 0, 7); cx.fill();
-  label(ms < 0 ? 'Fehler' : ms + ' ms', q[0], q[1] - 12, '#ddd');
+  label(ms < 0 ? t('common.error') : ms + ' ms', q[0], q[1] - 12, '#ddd');
 }
 
 function drawThroughput(p) {
@@ -1166,6 +1339,74 @@ function label(text, x, y, color) {
 // ---------- 3D view ----------
 let yaw3 = 0.8, pitch3 = 0.5, zoom3 = 1;
 const roomPalette = ['#5aa0d8', '#7cd85a', '#d8a05a', '#c05ad8', '#5ad8c8', '#d85a6e'];
+
+function drawRoomMesh() {
+  const vertices = S.roommesh.v || [];
+  const colors = S.roommesh.c || [];
+  if (vertices.length < 9) {
+    label(t('mesh.empty'), cv.width / 2, cv.height / 2, '#e0a03c');
+    return;
+  }
+
+  let sxm = 0, sym = 0, szm = 0;
+  const vertexCount = Math.floor(vertices.length / 3);
+  for (let i = 0; i + 2 < vertices.length; i += 3) {
+    sxm += vertices[i]; sym += vertices[i + 1]; szm += vertices[i + 2];
+  }
+  const ctr = { x:sxm / vertexCount, y:sym / vertexCount, z:szm / vertexCount };
+  let ext = 1;
+  for (let i = 0; i + 2 < vertices.length; i += 3)
+    ext = Math.max(ext, Math.abs(vertices[i] - ctr.x),
+      Math.abs(vertices[i + 1] - ctr.y), Math.abs(vertices[i + 2] - ctr.z));
+
+  const scale3 = Math.min(cv.width, cv.height) * 0.44 / ext * zoom3;
+  const cyaw = Math.cos(yaw3), syaw = Math.sin(yaw3);
+  const cp = Math.cos(pitch3), sp = Math.sin(pitch3);
+  const project = (x, y, z) => {
+    const dx = ctr.x - x, dy = y - ctr.y, dz = z - ctr.z;
+    const rx = dx * cyaw - dz * syaw;
+    const rz = dx * syaw + dz * cyaw;
+    const ry = dy * cp - rz * sp;
+    const depth = dy * sp + rz * cp;
+    return [cv.width / 2 + rx * scale3, cv.height / 2 - ry * scale3, depth];
+  };
+
+  const triangles = [];
+  for (let i = 0, ci = 0; i + 8 < vertices.length; i += 9, ci += 9) {
+    const centerY = (vertices[i + 1] + vertices[i + 4] + vertices[i + 7]) / 3;
+    if (floorSel !== 'all' && floorBases.length &&
+        floorIndexForY(centerY) !== parseInt(floorSel)) continue;
+    const a = project(vertices[i], vertices[i + 1], vertices[i + 2]);
+    const b = project(vertices[i + 3], vertices[i + 4], vertices[i + 5]);
+    const c = project(vertices[i + 6], vertices[i + 7], vertices[i + 8]);
+    const r = colors.length > ci + 8
+      ? Math.round((colors[ci] + colors[ci + 3] + colors[ci + 6]) / 3) : 110;
+    const g = colors.length > ci + 8
+      ? Math.round((colors[ci + 1] + colors[ci + 4] + colors[ci + 7]) / 3) : 110;
+    const bcol = colors.length > ci + 8
+      ? Math.round((colors[ci + 2] + colors[ci + 5] + colors[ci + 8]) / 3) : 110;
+    triangles.push({ a, b, c, depth:(a[2] + b[2] + c[2]) / 3,
+      color:`rgb(${r},${g},${bcol})` });
+  }
+  triangles.sort((a, b) => a.depth - b.depth);
+  cx.save();
+  cx.globalAlpha = 0.82;
+  cx.lineWidth = 0.35;
+  for (const tri of triangles) {
+    cx.beginPath();
+    cx.moveTo(tri.a[0], tri.a[1]);
+    cx.lineTo(tri.b[0], tri.b[1]);
+    cx.lineTo(tri.c[0], tri.c[1]);
+    cx.closePath();
+    cx.fillStyle = tri.color;
+    cx.fill();
+    cx.strokeStyle = 'rgba(8,12,18,0.28)';
+    cx.stroke();
+  }
+  cx.restore();
+  label(t('mesh.triangles', triangles.length), cv.width / 2, 18, '#8fd4ff');
+  label(t('orbit.help'), cv.width / 2, cv.height - 8, '#8a93a6');
+}
 
 function bounds3(pts) {
   let n = 0, sx3 = 0, sy3 = 0, sz3 = 0, ext = 1;
@@ -1245,22 +1486,23 @@ function draw3d(pts) {
     cx.fillStyle = '#25b7dd';
     cx.beginPath(); cx.arc(q[0], q[1], 5, 0, 7); cx.fill();
   }
-  label('Ziehen = drehen, Rad/Pinch = Zoom', cv.width / 2, cv.height - 8, '#8a93a6');
+  label(t('orbit.help'), cv.width / 2, cv.height - 8, '#8a93a6');
 }
 
 let dragging = false, lastX = 0, lastY = 0, lastPinch = 0, moved = false;
+function orbitMode() { return mode === '3d' || mode === 'mesh'; }
 cv.addEventListener('mousedown', e => { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; });
 window.addEventListener('mouseup', () => { dragging = false; });
 window.addEventListener('mousemove', e => {
-  if (!dragging || mode !== '3d') return;
+  if (!dragging || !orbitMode()) return;
   moved = true;
-  yaw3 += (e.clientX - lastX) * 0.008;
+  yaw3 -= (e.clientX - lastX) * 0.008;
   pitch3 = Math.max(0.05, Math.min(1.5, pitch3 + (e.clientY - lastY) * 0.006));
   lastX = e.clientX; lastY = e.clientY;
   draw();
 });
 cv.addEventListener('wheel', e => {
-  if (mode !== '3d') return;
+  if (!orbitMode()) return;
   e.preventDefault();
   zoom3 = Math.max(0.3, Math.min(6, zoom3 * (e.deltaY < 0 ? 1.1 : 0.9)));
   draw();
@@ -1272,9 +1514,9 @@ cv.addEventListener('touchstart', e => {
     e.touches[0].clientY - e.touches[1].clientY);
 }, { passive: true });
 cv.addEventListener('touchmove', e => {
-  if (mode !== '3d') return;
+  if (!orbitMode()) return;
   if (e.touches.length === 1) {
-    yaw3 += (e.touches[0].clientX - lastX) * 0.008;
+    yaw3 -= (e.touches[0].clientX - lastX) * 0.008;
     pitch3 = Math.max(0.05, Math.min(1.5, pitch3 + (e.touches[0].clientY - lastY) * 0.006));
     lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
   } else if (e.touches.length === 2) {
@@ -1290,8 +1532,8 @@ cv.addEventListener('touchmove', e => {
 
 // ---------- selection tool ----------
 cv.addEventListener('click', e => {
-  if (mode === '3d' && moved) return; // Orbit-Drag ist keine Auswahl
-  if (mode === '3d') return;
+  if (orbitMode() && moved) return; // Orbit drag is not a selection.
+  if (orbitMode()) return;
   const r = cv.getBoundingClientRect();
   const px = e.clientX - r.left, py = e.clientY - r.top;
   if (pivotPick && compareOn) {
@@ -1314,11 +1556,11 @@ function setPivotFromScreen(px, py) {
   S2.alignX = mapped[0] - base[0];
   S2.alignZ = mapped[1] - base[1];
   S2.needsAuto = false;
-  S2.alignmentSource = 'manuell · eigener Drehpunkt';
+  S2.alignmentSource = 'align.manual_pivot';
   pivotPick = false;
   const btn = document.getElementById('btnPivot');
   btn.classList.remove('active');
-  btn.textContent = 'Drehpunkt im Plan setzen';
+  btn.textContent = t('align.pivot');
   updateAlignmentError(); updateAlignUi(); saveAlignment(); draw();
 }
 
@@ -1356,7 +1598,8 @@ function pick(px, py) {
   if (!best) { popupEl.style.display = 'none'; draw(); return; }
   let txt = '';
   if (best.kind === 'point')
-    txt = 'Messpunkt\nRSSI: ' + best.p.r + ' dBm\nEtage ' + (best.p.f + 1) +
+    txt = t('popup.point') + '\nRSSI: ' + best.p.r + ' dBm\n' +
+      t('popup.floor', best.p.f + 1) +
       (best.p.b ? '\nAP: …' + best.p.b.slice(-5) : '') +
       '\nx ' + best.p.x.toFixed(2) + ' / z ' + best.p.z.toFixed(2) + ' m';
   else if (best.kind === 'ap')
@@ -1367,17 +1610,17 @@ function pick(px, py) {
       (best.ap.pathLossN || 0).toFixed(2) + ' · P1m = ' +
       (best.ap.powerAt1m || 0).toFixed(1) + ' dBm';
   else if (best.kind === 'note')
-    txt = 'Notiz (' + best.n.type + ')\n' + (best.n.text || '');
+    txt = t('popup.note') + ' (' + best.n.type + ')\n' + (best.n.text || '');
   else if (best.kind === 'ping')
-    txt = 'Ping-Knoten\n' +
-      (best.p.latencyMs < 0 ? 'Fehler' : best.p.latencyMs + ' ms');
+    txt = t('popup.ping') + '\n' +
+      (best.p.latencyMs < 0 ? t('common.error') : best.p.latencyMs + ' ms');
   else if (best.kind === 'throughput')
-    txt = 'Lokaler Durchsatz\nQuest → Browser: ' +
+    txt = t('popup.throughput') + '\nQuest → Browser: ' +
       best.p.questToBrowserMbps.toFixed(1) + ' Mbit/s\nBrowser → Quest: ' +
-      best.p.browserToQuestMbps.toFixed(1) + ' Mbit/s\nLatenz: ' +
+      best.p.browserToQuestMbps.toFixed(1) + ' Mbit/s\n' + t('popup.latency') + ': ' +
       best.p.latencyMs.toFixed(0) + ' ms';
   else if (best.kind === 'roam')
-    txt = 'Roaming\n…' + (best.ev.fromBssid || '').slice(-5) + ' → …' +
+    txt = t('popup.roaming') + '\n…' + (best.ev.fromBssid || '').slice(-5) + ' → …' +
       (best.ev.toBssid || '').slice(-5) + '\n' +
       bandLabel(best.ev.fromFrequencyMhz) + ' → ' + bandLabel(best.ev.toFrequencyMhz);
   popupEl.textContent = txt;
@@ -1415,7 +1658,7 @@ function drawTimeline() {
   if (!hist.length) {
     tx.fillStyle = '#5a6472';
     tx.font = '12px system-ui';
-    tx.fillText('Aufnahmeverlauf erscheint mit den ersten Messpunkten …', 10, h / 2);
+    tx.fillText(t('timeline.empty'), 10, h / 2);
     return;
   }
   const t0 = hist[0].t;
@@ -1454,8 +1697,8 @@ function drawTimeline() {
   tx.fillStyle = '#aeb6c4';
   tx.font = '11px system-ui';
   tx.textAlign = 'left';
-  tx.fillText('RSSI ' + last.r + ' dBm · ' + S.points.length + ' Punkte · ' +
-    S.roams.length + ' Roaming · ' + outages.length + ' Ausfälle', 8, 13);
+  tx.fillText(t('timeline.summary', last.r, S.points.length,
+    S.roams.length, outages.length), 8, 13);
   tx.textAlign = 'right';
   tx.fillText(new Date(t0).toLocaleTimeString() + ' – ' +
     new Date(t1).toLocaleTimeString(), w - 8, 13);
@@ -1466,14 +1709,11 @@ setInterval(drawTimeline, 2000);
 // ---------- stats / files ----------
 function updateStats(shown) {
   const last = S.points[S.points.length - 1];
-  statsEl.textContent =
-    'Punkte: ' + S.points.length + ' (angezeigt ' + shown + ')\n' +
-    'Räume: ' + S.rooms.length + '   Pings: ' + S.pings.length +
-    '   Speed: ' + S.throughput.length + '\n' +
-    'Notizen: ' + S.notes.length + '   APs: ' + apsSeen.size +
-    '   Roaming: ' + S.roams.length +
-    (compareOn ? '\nVergleich: ' + S2.stem : '') +
-    (last ? '\nLetzte: ' + last.r + ' dBm' : '');
+  statsEl.textContent = t('stats.summary', S.points.length, shown,
+    S.rooms.length, S.pings.length, S.throughput.length, S.notes.length,
+    apsSeen.size, S.roams.length) +
+    (compareOn ? t('stats.compare', S2.stem) : '') +
+    (last ? t('stats.last', last.r) : '');
 }
 
 const sidecars = ['_rooms', '_drill', '_apfix', '_ping', '_notes', '_measure',
@@ -1484,22 +1724,108 @@ function isScanJson(name) {
   return !sidecars.some(sfx => stem.endsWith(sfx) || stem.includes(sfx + '_'));
 }
 
-function loadFiles() {
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function startExport() {
+  const button = document.getElementById('btnExport');
+  const status = document.getElementById('exportStatus');
+  button.disabled = true;
+  status.textContent = t('export.start');
+  try {
+    const response = await fetch('/export', { cache:'no-store' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok && response.status !== 409)
+      throw new Error(result.error || ('HTTP ' + response.status));
+
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
+      await wait(700);
+      const stateResponse = await fetch('/export-status', { cache:'no-store' });
+      if (!stateResponse.ok) throw new Error(t('export.status_failed'));
+      const exportState = await stateResponse.json();
+      if (exportState.state === 'queued') {
+        status.textContent = t('export.wait');
+      } else if (exportState.state === 'running') {
+        status.textContent = t('export.running');
+      } else if (exportState.state === 'done') {
+        status.textContent = t('export.done');
+        loadFiles(true);
+        return;
+      } else if (exportState.state === 'error') {
+        throw new Error(exportState.error || t('export.unknown'));
+      }
+    }
+    throw new Error(t('export.timeout'));
+  } catch (error) {
+    status.textContent = t('export.failed', error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function appendFileLink(parent, file) {
+  const a = document.createElement('a');
+  a.href = '/download?f=' + encodeURIComponent(file.name);
+  a.textContent = file.name + ' ';
+  const size = document.createElement('span');
+  size.className = 'sz';
+  size.textContent = '(' + (file.size / 1024).toFixed(0) + ' kB)';
+  a.appendChild(size);
+  parent.appendChild(a);
+}
+
+function renderFileGroups(box, files, openNewest, previouslyOpen) {
+  const stems = files.filter(f => isScanJson(f.name))
+    .map(f => f.name.slice(0, -5))
+    .sort((a, b) => b.length - a.length);
+  const groups = new Map();
+  files.forEach(file => {
+    const base = file.name.slice(0, file.name.lastIndexOf('.'));
+    const stem = stems.find(s => base === s || base.startsWith(s + '_')) ||
+      t('files.other');
+    if (!groups.has(stem)) groups.set(stem, []);
+    groups.get(stem).push(file);
+  });
+  const ordered = Array.from(groups.entries()).map(([stem, entries]) => ({
+    stem,
+    entries:entries.sort((a, b) => a.name.localeCompare(b.name)),
+    modified:Math.max(...entries.map(f => f.modified || 0)),
+    size:entries.reduce((sum, f) => sum + (f.size || 0), 0)
+  })).sort((a, b) => b.modified - a.modified);
+
+  ordered.forEach((group, index) => {
+    const folder = document.createElement('details');
+    folder.dataset.stem = group.stem;
+    if ((openNewest && index === 0) || previouslyOpen.has(group.stem))
+      folder.open = true;
+    const summary = document.createElement('summary');
+    summary.appendChild(document.createTextNode(group.stem));
+    const meta = document.createElement('span');
+    meta.className = 'groupmeta';
+    meta.textContent = t('files.meta', group.entries.length,
+      (group.size / 1048576).toFixed(group.size >= 1048576 ? 1 : 2));
+    summary.appendChild(meta);
+    folder.appendChild(summary);
+    const body = document.createElement('div');
+    body.className = 'groupbody';
+    group.entries.forEach(file => appendFileLink(body, file));
+    folder.appendChild(body);
+    box.appendChild(folder);
+  });
+}
+
+function loadFiles(openNewest = false) {
   fetch('/scans').then(r => r.json()).then(d => {
     const files = (d.files || []);
     const box = document.getElementById('files');
+    const previouslyOpen = new Set(Array.from(box.querySelectorAll('details[open]'))
+      .map(folder => folder.dataset.stem));
     box.innerHTML = '';
-    files.sort((a, b) => a.name.localeCompare(b.name)).forEach(f => {
-      const a = document.createElement('a');
-      a.href = '/download?f=' + encodeURIComponent(f.name);
-      a.innerHTML = f.name + ` <span class='sz'>(${(f.size / 1024).toFixed(0)} kB)</span>`;
-      box.appendChild(a);
-    });
-    if (!files.length) box.textContent = '(keine Dateien)';
+    renderFileGroups(box, files, openNewest, previouslyOpen);
+    if (!files.length) box.textContent = t('files.none');
     // Vergleichs-Auswahl: nur ladbare Sample-JSONs.
     const sel = document.getElementById('cmpScan');
     const cur = sel.value;
-    sel.innerHTML = `<option value=''>&ndash; Scan w&auml;hlen &ndash;</option>`;
+    sel.innerHTML = `<option value=''>${t('compare.choose')}</option>`;
     files.filter(f => isScanJson(f.name)).forEach(f => {
       const o = document.createElement('option');
       o.value = f.name;
@@ -1512,6 +1838,8 @@ function loadFiles() {
 
 drawLegend();
 resize();
+fetch('/language', { cache:'no-store' }).then(r => r.json())
+  .then(value => applyLanguage(value.language)).catch(() => applyLanguage('de'));
 connect();
 loadFiles();
 setInterval(loadFiles, 15000);

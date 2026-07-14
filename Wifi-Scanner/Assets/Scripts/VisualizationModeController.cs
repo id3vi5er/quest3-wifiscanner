@@ -37,10 +37,10 @@ namespace WifiScanner
 
         public string ModeLabel => Mode switch
         {
-            VizMode.PointCloud => "Punktwolke",
-            VizMode.FloorHeatmap => "Heatmap",
-            VizMode.Off => "Aus",
-            _ => "Beides",
+            VizMode.PointCloud => LocalizationManager.Get("mode.points"),
+            VizMode.FloorHeatmap => LocalizationManager.Get("mode.heatmap"),
+            VizMode.Off => LocalizationManager.Get("mode.off"),
+            _ => LocalizationManager.Get("mode.both"),
         };
 
         private void Start() => SetMode(startMode);

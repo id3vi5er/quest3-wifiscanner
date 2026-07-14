@@ -470,7 +470,11 @@ namespace WifiScanner
                 : null;
             if (roomTracer != null)
                 roomTracer.Export(stem, drills); // SVG + JSON + extruded OBJ
-            dynamicRoomMesh?.ExportObj(stem); // separate geometry-only _roommesh.obj
+            if (dynamicRoomMesh != null)
+            {
+                dynamicRoomMesh.ExportObj(stem); // geometry-only compatibility export
+                dynamicRoomMesh.ExportPly(stem); // RSSI-coloured vertex export
+            }
             if (drills != null)
                 DataExporter.ExportDrillJson(drills,
                     floorHeatmap != null ? floorHeatmap.gridYawDegrees : 0f, stem);
