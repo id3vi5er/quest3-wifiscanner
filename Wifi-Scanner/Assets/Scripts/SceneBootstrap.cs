@@ -23,6 +23,10 @@ namespace WifiScanner
         public bool enableStreaming = true;
         public string pcIp = "192.168.1.100";
         public int pcPort = 9999;
+        [Tooltip("30 Hz head pose + calibration marks for WLAN-CSI tracking " +
+                 "(csi-tracking recorder, same PC target). Left X = mark, " +
+                 "left stick press = posture label.")]
+        public bool enableCsiPoseStream = true;
 
         [Header("Web dashboard (browser on the WLAN)")]
         [Tooltip("Serve a live dashboard + scan downloads at http://<quest-ip>:<port>.")]
@@ -228,6 +232,13 @@ namespace WifiScanner
             var streamer = gameObject.AddComponent<NetworkStreamer>();
             streamer.enableStreaming = enableStreaming;
             streamer.SetTarget(PlayerPrefs.GetString("wifi_pc_ip", pcIp), pcPort);
+
+            // --- CSI-tracking labels (headset pose at 30 Hz with Quest clock) ---
+            if (enableCsiPoseStream)
+            {
+                var csiPose = gameObject.AddComponent<CsiPoseStreamer>();
+                csiPose.streamer = streamer;
+            }
 
             // --- Sample collector ---
             _collector = gameObject.AddComponent<SampleCollector>();
