@@ -1,6 +1,6 @@
 # Quest 3 WiFi Scanner — English Menu Guide
 
-This guide explains the German in-headset interface and the controller actions needed to operate it. The application starts in mixed-reality passthrough with recording paused.
+This guide explains the in-headset interface using its German labels and the controller actions needed to operate it. The UI can also be switched to English in the `System` tab. The application starts in mixed-reality passthrough with recording paused.
 
 ## 1. Basic interaction
 

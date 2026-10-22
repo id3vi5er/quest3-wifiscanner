@@ -1,193 +1,247 @@
-# Quest 3 WiFi-Scanner
+# Quest 3 WiFi Scanner
 
-Native Meta-Quest-3-App (Unity 6, **OpenXR + Meta-OpenXR/AR Foundation**),
-die die WiFi-Signalstaerke (RSSI) des **verbundenen** Access Points ausliest
-und mit der 3D-Kopfposition verknuepft. Beim Durchschreiten von Raeumen
-entstehen im **MR-Passthrough**:
+A native Meta Quest 3 / 3S app (Unity 6, **OpenXR + Meta OpenXR / AR Foundation**)
+that reads the signal strength (RSSI) of the **connected** Wi-Fi access point
+and ties every reading to the headset's 3D position. As you walk through a
+building, the app builds up in **mixed-reality passthrough**:
 
-- eine **3D-Punktwolke** mit RSSI-Farben,
-- eine **interpolierte Boden-Heatmap** (IDW) mit grauer Luecken-Anzeige fuer
-  unvermessenes Gebiet,
-- ein **manuell gezeichneter, massstaeblicher Grundriss** inklusive Raumhoehen,
-  Tueren/Fenstern und optionalen Bohr-, Mess-, Ping- und Notiz-Markern,
-- eine **Handgelenk-Minimap** und ein **Web-Dashboard** fuer Live-Ansicht,
-- optional ein **laufend aktualisiertes Raummesh aus Environment Depth**, ohne
-  vorheriges Space Setup,
-- einen **lokalen bidirektionalen Durchsatztest** direkt gegen den Dashboard-Browser,
-  Downloads und Scan-Export im lokalen Netzwerk.
+- a **3D point cloud** colored by RSSI,
+- an **interpolated floor heatmap** (IDW) that shows unmeasured areas as gray
+  gaps,
+- a **guided survey layer** that tracks progress and measurement confidence
+  per room cell,
+- a **hand-drawn, to-scale floor plan** with room heights, doors and windows,
+  plus optional drill, measurement, ping and note markers,
+- a **wrist minimap** and a **web dashboard** served directly from the Quest,
+- optionally a **continuously updated room mesh from environment depth**, no
+  Space Setup required,
+- a **local bidirectional throughput test** against the dashboard browser,
+  plus downloads and exports over the local network.
 
-Die App arbeitet ohne vorherigen Meta-Space-Setup-Raumscan. Virtuelle Punkte
-und Heatmap koennen trotzdem dynamisch hinter realen Objekten verschwinden:
-Die Occlusion laeuft ueber die Quest-Depth-API in Echtzeit.
-Dieselbe Depth-API kann im Tab `Ansicht` separat fuer den dynamischen Raumscan
-aktiviert werden. Scan und Mesh-Sichtbarkeit sind zwei unabhaengige Schalter;
-standardmaessig ist der rechenintensive Scan aus.
+No Meta Space Setup room scan is needed. Virtual points and the heatmap still
+disappear behind real objects: occlusion runs in real time on the Quest depth
+API. The same depth API can optionally drive the dynamic room scan. Scanning
+and mesh visibility are two independent toggles; the expensive scan is off by
+default.
 
-> **Warum nativ und nicht WebXR?** Browser/WebXR haben keine API fuer
-> WiFi-RSSI in dBm. Diese Information ist nur ueber native Android-APIs
-> (`WifiManager`) erreichbar.
+> **Why native and not WebXR?** Browsers and WebXR have no API for Wi-Fi RSSI
+> in dBm. That information is only available through native Android APIs
+> (`WifiManager`).
+
+The in-headset UI is available in **English and German**. It follows the
+system language and can be switched in the *System* tab of the control panel.
 
 ---
 
-## Eindruecke aus der Quest
+## Impressions from the Quest
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/Quest-MR-Heatmap-Pointcloud.jpeg" alt="MR-Heatmap und WiFi-Punktwolke in der Quest"><br><sub>Heatmap und RSSI-Punktwolke direkt im realen Raum</sub></td>
-    <td width="50%"><img src="assets/Quest-MR-Control-Panel.jpeg" alt="Bedienpanel und Handgelenk-Minimap in der Quest"><br><sub>World-Space-Bedienpanel und Handgelenk-Minimap</sub></td>
+    <td width="50%"><img src="assets/Quest-MR-Heatmap-Pointcloud.jpeg" alt="MR heatmap and Wi-Fi point cloud on the Quest"><br><sub>Heatmap and RSSI point cloud in the real room</sub></td>
+    <td width="50%"><img src="assets/Quest-MR-Control-Panel.jpeg" alt="Control panel and wrist minimap on the Quest"><br><sub>World-space control panel and wrist minimap</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/Quest-MR-Throughput.jpeg" alt="Raeumliche Durchsatzmesspunkte in der Quest"><br><sub>Bidirektionale Durchsatzmesspunkte im Gebaeude</sub></td>
-    <td width="50%"><img src="assets/Quest-MR-AP-Estimate.jpeg" alt="AP-Standortschaetzung in der Quest"><br><sub>Geschaetzter AP-Standort mit Distanz und Signalstaerke</sub></td>
+    <td width="50%"><img src="assets/Quest-MR-Throughput.jpeg" alt="Spatial throughput markers on the Quest"><br><sub>Bidirectional throughput markers inside the building</sub></td>
+    <td width="50%"><img src="assets/Quest-MR-AP-Estimate.jpeg" alt="Access point location estimate on the Quest"><br><sub>Estimated AP location with distance and signal strength</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="assets/Quest-MR-Window-Heatmap.jpeg" alt="Erfasste Raumgeometrie, Fenster und Heatmap in der Quest"><br><sub>Raumgeometrie, Fenster und WiFi-Heatmap im Passthrough</sub></td>
+    <td colspan="2"><img src="assets/Quest-MR-Window-Heatmap.jpeg" alt="Room geometry, windows and heatmap on the Quest"><br><sub>Room geometry, windows and Wi-Fi heatmap in passthrough</sub></td>
   </tr>
 </table>
 
 ---
 
-## Aktueller Funktionsumfang
+## Features
 
-- **Live-WiFi-Messung** des verbundenen APs: RSSI, Link-Speed, Frequenz, SSID,
-  BSSID und Etage.
-- **3D-Punktwolke** mit konstanter Punktdichte: nahe Punkte werden per
-  laufendem Mittelwert aktualisiert statt dupliziert.
-- **Boden-Heatmap** pro aktiver Etage: IDW-Interpolation, Lueckenraster,
-  Deckkraft- und RSSI-Filter.
-- **Multi-Etage**: Punkte werden beim Aufnehmen einer Etage zugeordnet. Unterstuetzt Kellergeschosse (KG), beliebige Etagenverschiebungen und filterbare Ansichten.
-- **Manueller Raumzeichner**: Ecken setzen, Ecken verschieben, Raumhoehe
-  ziehen, Boden kalibrieren.
-- **Tueren/Fenster**: Wand-Oeffnungen werden in AR visualisiert, im SVG als
-  Wandluecken markiert und im OBJ als echte Loecher in den Wandflaechen
-  exportiert.
-- **Grid-Ausrichtung**: Heatmap-Raster per Zwei-Controller-Linie an eine echte
-  Wand ausrichten.
-- **Dynamische Occlusion**: Environment Depth blendet Punkte und Heatmap hinter
-  realen Objekten aus, ohne Raumscan.
-- **Dynamisches Raummesh**: optionaler Environment-Depth-Scan mit sparse TSDF,
-  Surface Nets, Chunk-Aktualisierung und normalbasierter Lasertag-Farbdarstellung.
-  Ausschalten stoppt Sensoranforderung, Integration und Meshing vollstaendig;
-  Ausblenden stoppt den laufenden Scan nicht.
-- **Minimap** am rechten Handgelenk: Heatmap, Grundriss, Kopfposition,
-  Blickrichtung, nordfest oder mit Blickrichtung rotierend.
-- **HUD** am linken Handgelenk: REC-Status, Punktzahl, RSSI, SSID, Ansicht,
-  Deckkraft und Legende.
-- **Analysewerkzeuge**: AP-Standort-Schaetzung, TCP-Latenz-Punkte,
-  raeumliche Notizen, Distanzmessung, Bohrplanung und universeller
-  Loeschmodus.
-- **Multi-AP-Support**: Gleichzeitige Standort-Schaetzung und Unsicherheits-Kreise fuer mehrere Access Points (BSSIDs).
-- **Roaming-Tracking**: Erkennt BSSID- oder Band-Wechsel (z. B. in Mesh-Netzwerken) waehrend der Aufnahme, markiert diese als physisches Ereignis im Raum und exportiert sie.
-- **Coverage-Simulation (Prognose)**: Echtzeit-Pfadverlust-Vorhersage basierend
-  auf dem Grundriss (Raumwaende, Tueren/Fenster) und einem realen (fixierten)
-  oder virtuell gesetzten AP.
-- **Geiger-Audio**: optionales RSSI-Audiofeedback; staerkeres Signal erzeugt
-  schnellere/hoehere Blips.
-- **Session laden und ausrichten**: gespeicherte Scans koennen in der Quest
-  wieder geladen und per realer Wand auf den aktuellen Tracking-Ursprung
-  ausgerichtet werden.
-- **Live-Streaming**: UDP zu `tools/receiver.py` und eingebettetes
-  Web-Dashboard direkt von der Quest.
+**Measuring**
+
+- **Live Wi-Fi readings** of the connected AP: RSSI, link speed, frequency,
+  SSID, BSSID and floor.
+- **Multi-AP scanning**: optionally records all visible neighboring access
+  points. Every BSSID gets its own measurements, heatmap filter and location
+  estimate.
+- **Roaming tracking**: detects BSSID or band changes (e.g. in mesh networks)
+  while recording, marks them in space and exports them.
+- **Throughput test**: measures the local link Quest → browser and
+  browser → Quest and places the result as a spatial marker.
+- **Ping nodes**: TCP latency measurements placed in the room, against a
+  configurable host.
+
+**Visualizing**
+
+- **3D point cloud** with constant point density: nearby revisits update a
+  running average instead of duplicating points.
+- **Floor heatmap** per floor: IDW interpolation, gap grid, opacity and RSSI
+  range filter.
+- **Guided survey**: rooms are split into aligned cells. Switch the layer
+  between RSSI, *Progress* and *Measurement confidence*. Confidence takes
+  density, distance, RSSI stability, age and tracking quality into account
+  without mixing them into the raw RSSI heatmap. Cells blocked by furniture or
+  walls can be marked unwalkable with a dedicated tool. The live view and the
+  report use the same criteria.
+- **Before/after comparison**: diff the current session against a saved scan
+  (green = better, red = worse), e.g. after moving an AP.
+- **Coverage prediction**: real-time path-loss prediction from the floor plan
+  (walls, doors, windows) for a real (fixed) or virtually placed AP.
+- **Wall attenuation estimate** per wall, shown in AR and exported as SVG.
+- **AP location estimate** with uncertainty circles, for one or many BSSIDs.
+- **Dynamic occlusion**: environment depth hides points and heatmap behind
+  real objects, without a room scan.
+- **Dynamic room mesh**: optional environment-depth scan using a sparse TSDF,
+  Surface Nets and chunked updates. The mesh can be tinted by nearby RSSI.
+  Turning the scan off fully stops depth requests, integration and meshing;
+  hiding the mesh does not stop the scan.
+- **Wrist minimap** (left wrist): heatmap, floor plan, head position and view
+  direction, north-up or rotating, zoomable with the right stick.
+- **Geiger audio**: optional RSSI audio feedback; a stronger signal produces
+  faster, higher-pitched blips.
+
+**Mapping**
+
+- **Room tracer**: place corners, move corners, drag room height, calibrate
+  the floor, name rooms.
+- **Doors and windows**: openings are shown in AR, drawn as wall gaps in SVG
+  and cut as real holes into the OBJ walls.
+- **Grid alignment**: align the heatmap grid to a real wall with a
+  two-controller line.
+- **Multiple floors**: samples are assigned to the active floor. Basements,
+  upper floors and label shifting are supported, as are filtered views.
+- **Analysis tools** on the left-wrist palette: drill planner, distance
+  measurement, spatial notes, ping nodes, survey cells, universal delete mode
+  and a global **undo**.
+
+**Sessions**
+
+- **Autosave and resume**: on start, the app offers to continue the last
+  session.
+- **Load and align**: saved scans can be reloaded on the Quest and snapped onto
+  the current tracking origin using a real wall. Samples, rooms, floors, grid
+  orientation and all tool sidecars move together.
+- **First-run tutorial** covering floor calibration, room tracing, recording
+  and export.
+- **Live streaming**: embedded web dashboard plus an optional UDP stream to
+  `tools/receiver.py`.
 
 ---
 
-## Datenausgabe
+## Exported data
 
-Beim Export schreibt die App nach `Application.persistentDataPath`:
+On export, the app writes to `Application.persistentDataPath`:
 
-- `<stem>.csv` und `<stem>.json` mit allen Messpunkten
-- `<stem>_heatmap.png` plus `<stem>_heatmap.json` mit Georeferenz
-- `<stem>_rooms.svg` und `<stem>_rooms.json` fuer den Grundriss
-- `<stem>_walls.svg` als Grundriss mit beschrifteten Wand-Daempfungen (in dB)
-- `<stem>_coverage.png` plus `<stem>_coverage.json` mit der simulierten Coverage-Prognose
-- `<stem>_roam.json` fuer aufgezeichnete Roaming-Ereignisse (BSSID-/Band-Wechsel)
-- `<stem>_rooms.obj` fuer extrudierte Raumwaende mit Tuer-/Fensterloechen
-- `<stem>_roommesh.obj` fuer das dynamisch erfasste, farblose Raummesh
-- `<stem>_combined.svg` als kombinierte Heatmap+Grundriss-Ansicht
-- optional `<stem>_drill.json`, `<stem>_apfix.json`, `<stem>_ping.json`,
-  `<stem>_notes.json`, `<stem>_measure.json`
-- `wifi_autosave.*` als periodisch ueberschriebene Autosave-Dateien
+| File | Content |
+|---|---|
+| `<stem>.csv`, `<stem>.json` | All samples. The JSON also stores `floors` and `gridYawDegrees`. |
+| `<stem>_heatmap.png` + `.json` | Heatmap of the active floor with georeference |
+| `<stem>_heatmap_<floor>.png` + `.json` | Heatmap and georeference for every floor |
+| `<stem>_survey_<floor>.json` + `.png` | Survey cells, progress, confidence and completion state per floor |
+| `<stem>_rooms.svg`, `<stem>_rooms.json` | Floor plan |
+| `<stem>_rooms.obj` | Extruded room walls with door and window holes |
+| `<stem>_walls.svg` | Floor plan labeled with wall attenuation in dB |
+| `<stem>_combined.svg` | Heatmap and floor plan combined |
+| `<stem>_coverage.png` + `.json` | Simulated coverage prediction |
+| `<stem>_roam.json` | Recorded roaming events |
+| `<stem>_roommesh.obj` | Dynamically captured room mesh |
+| `<stem>_report.html` | Self-contained survey report with findings |
+| `<stem>_drill/_apfix/_ping/_notes/_measure/_throughput.json` | Optional tool sidecars |
+| `wifi_autosave.*` | Periodically overwritten autosave |
 
-Das Web-Dashboard bietet zudem einen formatierten HTML Report, der alle Daten kombiniert visualisiert. Ein Beispiel des generierten HTML-Reports findest du hier:
-[Beispiel-Report ansehen (HTML)](assets/Example-Report.html) oder als Vorschau:
+When a session is reloaded, all sidecars are restored and transformed together
+by the scan aligner.
 
-![HTML Report Vorschau](assets/html_report.png)
+The web dashboard can also render a formatted HTML report that combines all
+data, with automatically generated findings per room. See the
+[example report (HTML)](assets/Example-Report.html) or the preview:
 
-Das Haupt-JSON enthaelt auch `floors` und `gridYawDegrees`, damit Scans spaeter
-mit Etagen und Rasterausrichtung wiederhergestellt werden koennen. Beim
-Session-Reload werden ausserdem die Tool-Sidecars fuer Bohrlinien,
-Ping-Knoten, Durchsatzpunkte, Notizen und Messungen wiederhergestellt und vom
-Scan-Aligner mittransformiert.
+![HTML report preview](assets/html_report.png)
 
 ---
 
-## Projektstruktur
+## Project structure
 
 ```text
 Wifi-Scanner/Assets/
   Scripts/
-    Sample.cs                     Messpunkt-Datenmodell (+ CSV/JSON)
-    WifiReader.cs                 Android-WifiManager-Bridge (JNI)
-    SampleCollector.cs            Aufnahme, Glaettung, Spatial Hash, Export-Fassade
-    HeatmapColorMapper.cs         RSSI -> Farbe
-    HeatmapLegend.cs              Farblegenden-Textur
-    PointCloudRenderer.cs         3D-Punktwolke, Pooling, Filter, Etagenfilter
-    FloorHeatmapRenderer.cs       Boden-Heatmap, IDW, Luecken, PNG-Export
-    VisualizationModeController.cs Punktwolke / Heatmap / Beides
-    FloorManager.cs               Etagenliste, Etagenwechsel, Etagenfilter
-    RoomTracer.cs                 Grundriss, Ecken, Raumhoehen, Bodenkalibrierung
-    OpeningTool.cs                Tueren/Fenster in gezeichneten Waenden
-    GridCalibrator.cs             Raster an Wand ausrichten
-    MinimapController.cs          Handgelenk-Minimap
-    DynamicOcclusionController.cs Environment-Depth-Occlusion
-    DynamicRoomMeshController.cs  Start/Stopp, Sichtbarkeit, Chunks und OBJ-Export
-    DynamicRoomMesh/              TSDF, Surface Nets und Mesh-Reduktion
-    ControlPanel.cs               World-Space-Bedienpanel
-    HudController.cs              Handgelenk-HUD
-    RecordingControls.cs          A/B-Controller-Shortcuts
-    OpacityControls.cs            Deckkraft per Stick
-    SessionLoader.cs              Scans listen/laden/restreamen
-    ScanAligner.cs                Geladene Scans auf reale Wand ausrichten
-    GeigerCounter.cs              RSSI-Audiofeedback
-    ApLocator.cs                  AP-Standort-Schaetzung
-    PingTester.cs                 TCP-Latenz-Knoten
-    SpatialNoteManager.cs         Raeumliche Notizen
-    DistanceMeasurer.cs           Distanzmessungen
-    DrillPlanner.cs               Bohrlinien auf Raumflaechen
-    DeleteController.cs           Universeller Loeschmodus
-  Resources/DynamicRoomMesh/      Depth-/TSDF-Compute-Kernel und Normalfarben-Shader
-    WebDashboardServer.cs         Eingebetteter HTTP/WebSocket-Server
-    WebDashboardPage.cs           Self-contained Browser-Dashboard
-    DataExporter.cs               CSV/JSON/PNG/SVG/OBJ-Export und Load-APIs
-    NetworkStreamer.cs            UDP + WebDashboard-Fanout
-    PassthroughSetup.cs           MR-Passthrough + Boundaryless
-    SceneBootstrap.cs             Runtime-Erzeugung und Verdrahtung
-    WifiProbe.cs                  Standalone-WiFi-Test
-  PointMat.mat / FloorHeatMat.mat Material-Assets gegen Shader-Stripping
-  Plugins/Android/AndroidManifest.xml Permissions + GameActivity
+    Sample.cs                      Sample data model (+ CSV/JSON)
+    WifiReader.cs                  Android WifiManager bridge (JNI)
+    WifiScan.cs                    Scan results of all visible APs
+    SampleCollector.cs             Recording, smoothing, spatial hash, export facade
+    MultiApScanner.cs              Feeds neighboring BSSIDs into the pipeline
+    RoamingTracker.cs              BSSID/band change detection
+    HeatmapColorMapper.cs          RSSI -> color (RdYlGn)
+    HeatmapLegend.cs               Color legend texture
+    PointCloudRenderer.cs          3D point cloud, pooling, filters, floor filter
+    FloorHeatmapRenderer.cs        Floor heatmap, IDW, gaps, diff view, PNG export
+    VisualizationModeController.cs Point cloud / heatmap / both / off
+    SurveyAnalyzer.cs              Room rasterization and survey findings
+    SurveyPlanController.cs        Guided survey plan and AR quality layer
+    SurveyCellTool.cs              Mark survey cells walkable/unwalkable
+    CoverageSimulator.cs           Path-loss coverage prediction
+    WallLossEstimator.cs           Per-wall attenuation estimate
+    ApLocator.cs                   AP location estimate
+    FloorManager.cs                Floors, floor switching, labels
+    RoomTracer.cs                  Floor plan, corners, heights, floor calibration
+    OpeningTool.cs                 Doors and windows in traced walls
+    GridCalibrator.cs              Align the grid to a wall
+    MinimapController.cs           Wrist minimap
+    DynamicOcclusionController.cs  Environment depth occlusion
+    DynamicRoomMeshController.cs   Room mesh start/stop, visibility, chunks, OBJ export
+    DynamicRoomMesh/               TSDF, Surface Nets and mesh decimation
+    ControlPanel.cs                World-space control panel
+    ToolPalette.cs                 Left-wrist tool palette
+    UiBuilder.cs, XrUiHover.cs     Shared runtime UI building blocks
+    LocalizationManager.cs         English/German UI, report and dashboard strings
+    OnboardingGuide.cs             First-run tutorial
+    ResumePrompt.cs                Resume-autosave prompt
+    UndoStack.cs                   Global undo
+    RecordingControls.cs           A/B controller shortcuts
+    OpacityControls.cs             Opacity via thumbstick
+    SessionLoader.cs               List, load and re-stream scans
+    ScanAligner.cs                 Align loaded scans to a real wall
+    GeigerCounter.cs               RSSI audio feedback
+    PingTester.cs                  TCP latency nodes
+    ThroughputTester.cs            Spatial throughput markers
+    SpatialNoteManager.cs          Spatial notes
+    DistanceMeasurer.cs            Distance measurements
+    DrillPlanner.cs                Drill lines on room surfaces
+    DeleteController.cs            Universal delete mode
+    WebDashboardServer.cs          Embedded HTTP/WebSocket server
+    WebDashboardPage.cs            Self-contained browser dashboard
+    ReportGenerator.cs             HTML survey report
+    DataExporter.cs                CSV/JSON/PNG/SVG/OBJ export and load APIs
+    NetworkStreamer.cs             UDP + dashboard fan-out
+    CsiPoseStreamer.cs             Headset pose stream for Wi-Fi CSI tracking labels
+    PassthroughSetup.cs            MR passthrough + boundaryless
+    SceneBootstrap.cs              Runtime creation and wiring
+    WifiProbe.cs                   Standalone Wi-Fi device test
+  Editor/
+    SurveyAnalyzerRegressionTests.cs
+  Resources/DynamicRoomMesh/       Depth/TSDF compute kernels and mesh shaders
+  PointMat.mat / FloorHeatMat.mat  Material assets (prevent shader stripping)
+  Plugins/Android/AndroidManifest.xml  Permissions + GameActivity
 
 tools/
-  receiver.py                     PC-GUI fuer Live- und Offline-Ansicht
-  pull_scans.ps1                  Export-Dateien von der Quest ziehen
+  receiver.py                      PC GUI for live and offline viewing
+  mesh_to_floorplan.py             Derive a 2D wall plan (SVG/JSON) from a room mesh OBJ
+  pull_scans.ps1                   Pull exported files from the Quest
 ```
 
 ---
 
 ## Setup
 
-### Voraussetzungen
+### Requirements
 
-- Unity 6000.0.x mit Android Build Support (+ OpenJDK, SDK, NDK)
-- Pakete aus dem Manifest:
+- Unity 6 (project uses 6000.3) with Android Build Support (OpenJDK, SDK, NDK)
+- Packages from the manifest, notably:
   `com.unity.xr.openxr`, `com.unity.xr.meta-openxr`,
   `com.unity.xr.arfoundation`, `com.unity.xr.interaction.toolkit`,
   `com.unity.xr.hands`
-- Quest 3 / 3S im Developer Mode, USB-Debugging erlaubt
+- Quest 3 / 3S in developer mode with USB debugging allowed
 
-### Project Settings
+### Project settings
 
-Project Settings -> XR Plug-in Management -> **OpenXR -> Android**:
-Feature-Gruppe **Meta Quest** aktivieren und diese Features anhaken:
+Project Settings → XR Plug-in Management → **OpenXR → Android**: enable the
+**Meta Quest** feature group and these features:
 
 1. **Meta Quest: Session**
 2. **Meta Quest: Camera (Passthrough)**
@@ -195,262 +249,223 @@ Feature-Gruppe **Meta Quest** aktivieren und diese Features anhaken:
 4. **Meta Quest: Meshing**
 5. **Meta Quest: Occlusion**
 
-`Meshing` bleibt aktiviert, obwohl kein statischer Raum-Mesh-Scan mehr benutzt
-wird: es sorgt fuer die `USE_SCENE`-Permission, die fuer die Depth/Occlusion-
-Pipeline benoetigt wird.
+`Meshing` stays enabled even though no static Space Setup mesh is used: it
+provides the `USE_SCENE` permission that the depth/occlusion pipeline needs.
 
-### Szene
+### Scene
 
-`Assets/Scenes/SampleScene.unity` ist vorbereitet: XR Origin, `SceneBootstrap`
-mit Material-Assets und `PassthroughSetup`. Fuer UDP-Live-Streaming nur die
-PC-IP am `SceneBootstrap` oder spaeter im Bedienpanel setzen.
+`Assets/Scenes/SampleScene.unity` is ready to use: XR Origin, `SceneBootstrap`
+with material assets, and `PassthroughSetup`. For the optional UDP live stream,
+set the PC IP on `SceneBootstrap` or later in the control panel.
 
-### URP-Magenta-Falle
+### URP magenta pitfall
 
-Zur Laufzeit per `Shader.Find` erzeugte Materialien verlieren im Android-Build
-leicht ihre Shader-Variante und rendern magenta. Deshalb sind `PointMat` und
-`FloorHeatMat` echte Material-Assets und werden am `SceneBootstrap` referenziert.
+Materials created at runtime with `Shader.Find` easily lose their shader
+variant in Android builds and render magenta. That is why `PointMat` and
+`FloorHeatMat` are real material assets referenced by `SceneBootstrap`.
 
 ---
 
-## Bedienung
+## Usage
 
-Die App startet in Passthrough mit pausierter Aufnahme. Aufnahme wird bewusst
-per A-Taste oder Panel gestartet.
+The app starts in passthrough with recording paused. Start recording
+deliberately with the A button or the panel. A full menu reference is in the
+[user manual](manual_eng.md) ([PDF](manual_eng.pdf)).
 
-### Controller
+### Controllers
 
-| Eingabe | Funktion |
+| Input | Action |
 |---|---|
-| A (rechts) | Aufnahme Pause/Weiter |
-| B (rechts) | Export |
-| L-Stick hoch/runter | Deckkraft von Punktwolke + Heatmap |
-| R-Stick hoch/runter | Minimap-Deckkraft |
-| R-Stick-Klick | Ansicht wechseln: Punktwolke -> Heatmap -> Beides |
-| Y (links) | Minimap ein-/ausblenden |
-| Menue-Taste (links) | Bedienpanel ein-/ausblenden |
-| R-Grip ueber dem Bedienpanel | Panel greifen und frei ablegen; es dreht sich danach automatisch zum Nutzer |
-| Oeffnung/Notiz/Ping lange druecken | Werkzeugoptionen an der Hand oeffnen |
-| Beide Grips nach "Grid ausrichten" | Wand-Kalibrierlinie uebernehmen |
-| Zeichenmodus: Trigger / B / A | Ecke setzen / Raum schliessen / letzte Ecke zurueck |
+| A (right) | Pause/resume recording |
+| B (right) | Export |
+| Right trigger | Click UI / perform the active tool action |
+| Left stick up/down | Opacity of point cloud and heatmap |
+| Right stick up/down | Zoom minimap (drill depth while drilling) |
+| Right stick click | Cycle view: point cloud → heatmap → both |
+| Y (left) | Show/hide minimap |
+| Menu button (left) | Show/hide control panel |
+| Right grip over the panel | Grab and place the panel; it then turns to face you |
+| Long press on a palette tool | Open tool options (door/window, note type, ping host) |
+| Both grips | Confirm grid calibration or scan alignment |
+| Room tool: trigger / B / A | Place corner / close room / remove last corner |
 
-Aktive Werkzeuge blockieren normale A/B-Belegungen dort, wo sonst
-Fehlbedienungen entstehen wuerden.
+Active tools take over A/B where they would otherwise cause mistakes.
 
-### Bedienpanel
+### Control panel
 
-Das World-Space-Panel wird mit dem Controller-Strahl bedient.
+The world-space panel is operated with the controller ray and has four tabs:
 
-**Aufnahme & Export**
+- **Scan**: export name, record/pause, export, new scan (with "export first"
+  prompt), load scans, clear points, multi-AP scan, throughput test, guided
+  survey, before/after comparison.
+- **View**: view mode, occlusion, room scan and room mesh visibility, minimap
+  and floor plan overlay, map rotation, AP location and AP filter, roaming
+  markers, throughput markers, audio, coverage prediction, opacity, RSSI
+  filter.
+- **Rooms**: grid alignment, floor calibration, delete rooms, remove last
+  opening, name rooms, wall attenuation, floors (select, create, shift labels),
+  clear measurements/notes/pings.
+- **System**: PC IP for UDP stream, web dashboard on/off with URL, delete all
+  scans on the device, language, restart tutorial.
 
-- Export-Name
-- PC-IP fuer UDP-Live-Stream
-- Aufnahme / Export
-- Neuer Scan mit Auswahl "Export + Neu" / "Ohne Export" / "Abbrechen"; die leere Session startet pausiert
-- Punkte loeschen
-- alle Scan-Dateien vom Geraet loeschen (Zwei-Klick-Bestaetigung)
-- Scan-Auswahl, Scan laden (Zwei-Klick-Bestaetigung)
-- Scan ausrichten
-- Web-Dashboard an/aus plus URL-Anzeige
+### Left-wrist tool palette
 
-**Raum-Setup**
-
-- Grid ausrichten
-- Raum zeichnen
-- Boden kalibrieren
-- Raeume loeschen
-- Bohrplanung
-- Loeschmodus
-- Tueren/Fenster
-- letzte Oeffnung entfernen
-
-**Etagen**
-
-- aktive Etage wechseln: EG -> OG1 -> ... -> Alle
-- neue Etage anlegen, wenn die Quest deutlich ueber der obersten bekannten
-  Etage liegt
-
-**Visualisierung**
-
-- Ansicht wechseln
-- dynamische Occlusion an/aus
-- Raumscan an/aus (stoppt bzw. startet Depth-Integration und Meshing)
-- Raummesh sichtbar/verborgen (der Scan laeuft unveraendert weiter)
-- Minimap an/aus
-- Grundriss in Minimap an/aus
-- Kartenrotation
-- AP-Standort an/aus
-- Audio an/aus
-- Deckkraft
-
-**Messen & Notizen**
-
-- Distanz messen
-- Notizen setzen
-- Ping-Testpunkte setzen
-- jeweilige Elemente loeschen
-
-**Filter**
-
-- Farblegende
-- RSSI-Min/Max-Filter, z. B. nur Schwachstellen unter -75 dBm anzeigen
+Room, opening, drill, distance, note, ping, survey cells, delete, align, tools
+off, and undo. Only one placement tool is active at a time; its instructions
+appear on the palette.
 
 ---
 
-## Raumzeichnen
+## Tracing rooms
 
-Der Grundriss wird manuell in AR gezeichnet, ohne Space Setup:
+The floor plan is drawn by hand in AR, without Space Setup:
 
-1. **Raum zeichnen** aktivieren.
-2. Mit dem rechten Controller nacheinander Ecken setzen.
-3. Mit B schliessen oder nahe der ersten Ecke einrasten und per Trigger
-   schliessen.
-4. Fertige Raeume koennen im Zeichenmodus bearbeitet werden:
-   - Ecke anvisieren und ziehen
-   - Bodenflaeche anvisieren, Trigger halten und Raumhoehe ziehen
+1. Select **Room** on the wrist palette.
+2. Place corners one by one with the right controller.
+3. Close with B, or snap near the first corner and close with the trigger.
+4. Edit finished rooms in the same tool:
+   - aim at a corner and drag it
+   - aim at the floor, hold the trigger and drag up to set room height
 
-Raeume mit Hoehe werden als OBJ-Waende exportiert. Boden- und Deckenflaechen
-werden bewusst nicht gekappt, damit auch komplexe/konkave Grundrisse robust
-bleiben.
+Rooms with a height are exported as OBJ walls. Floors and ceilings are
+deliberately left open so that complex, concave layouts stay robust.
 
-### Tueren und Fenster
+### Doors and windows
 
-Das Tool **Tueren/Fenster** arbeitet auf vorhandenen Waenden:
+The **Opening** tool works on existing walls (the room needs a height):
 
-- Tuer: erste obere Ecke/Anschlagseite waehlen, zweite Aktion legt Breite fest,
-  Hoehe geht automatisch bis zum Boden.
-- Fenster: zwei gegenueberliegende Ecken des Rechtecks setzen.
-- A wechselt zwischen Tuer/Fenster, B entfernt die letzte Oeffnung.
+- Door: first press sets the upper corner on the hinge side, the second sets
+  the width. The height extends to the floor automatically.
+- Window: set two opposite corners of the rectangle.
+- A switches between door and window, B removes the last opening.
 
-SVG-Exporte zeichnen Wandluecken mit Symbolen; OBJ-Exporte schneiden reale
-Oeffnungen in die Wandgeometrie.
+SVG exports draw wall gaps with symbols; OBJ exports cut real openings into the
+wall geometry.
 
 ---
 
-## Sessions Laden Und Ausrichten
+## Loading and aligning sessions
 
-Gespeicherte Scans koennen ueber das Panel wieder geladen werden. Geladen
-werden:
+Saved scans can be reloaded from the panel. This restores samples, rooms
+(including heights and openings), floors, grid orientation and all tool
+sidecars (drill lines, ping nodes, throughput points, notes, measurements).
 
-- Samples
-- Raeume inklusive Hoehen und Oeffnungen
-- Etagen
-- Grid-Yaw
+Because the Quest may reset its tracking origin on every launch, old world
+coordinates rarely line up with the real room. Use **Align**:
 
-Da die Quest ihren Tracking-Ursprung bei jedem Start neu setzen kann, liegen
-alte Weltkoordinaten selten exakt auf der realen Umgebung. Dafuer gibt es
-**Scan ausrichten**:
+1. Aim at a loaded room that has a height.
+2. Select a wall of the loaded floor plan with the trigger.
+3. Hold the left controller at the real anchor corner.
+4. Point the right controller along the real wall.
+5. Hold both grips, check the preview, release.
 
-1. Einen geladenen Raum mit Hoehe anvisieren.
-2. Wand aus dem geladenen Grundriss per Trigger waehlen.
-3. Linken Controller an die reale Anker-Ecke halten.
-4. Rechten Controller entlang der realen Wand halten.
-5. Beide Grips halten, Vorschau pruefen, loslassen.
-
-Die App rotiert und verschiebt die komplette Session inklusive Samples,
-Raeumen, Etagen und Grid-Yaw.
+The app rotates and moves the entire session.
 
 ---
 
-## Web-Dashboard Und PC-Viewer
+## Web dashboard and PC viewer
 
-### Eingebettetes Web-Dashboard
+### Embedded web dashboard
 
-Wenn aktiviert, serviert die Quest eine lokale Seite:
+When enabled, the Quest serves a local page:
 
 ```text
 http://<quest-ip>:8080
 ```
 
-Das Dashboard zeigt live:
+It shows live:
 
-- Messpunkte oder clientseitige 2D-Heatmap
-- Simulierte Coverage-Prognose (inkl. Waende und virtuellen/realen APs)
-- Laufpfad und aktuelle Kopfposition
-- Raeume mit Tueren/Fenstern
-- AP-Standort (inkl. mehrerer BSSIDs)
-- Roaming-Ereignisse
-- Ping-Knoten
-- Notizen
-- Etagenfilter
+- samples or a client-side 2D heatmap
+- coverage prediction (walls, virtual and real APs)
+- walking path and current head position
+- rooms with doors and windows
+- AP locations (multiple BSSIDs)
+- roaming events, ping nodes, throughput points and notes
+- floor filter and an interactive 3D view
 
-### Dashboard-Ansichten
+**Interpolated Wi-Fi heatmap with floor plan, walking path and throughput points**
 
-**Interpolierte WiFi-Heatmap mit Grundriss, Laufpfad und Durchsatzmesspunkten**
+![Web dashboard: heatmap view](assets/Screenshot-Webinterface_Heatmap.png)
 
-![Web-Dashboard: Heatmap-Ansicht](assets/Screenshot-Webinterface_Heatmap.png)
+**Individual RSSI samples and recorded walking path**
 
-**Einzelne RSSI-Messpunkte und aufgezeichneter Laufpfad**
+![Web dashboard: point view](assets/Screenshot-Webinterface_Points.png)
 
-![Web-Dashboard: Messpunkt-Ansicht](assets/Screenshot-Webinterface_Points.png)
+**Interactive 3D room view with floors and spatial point cloud**
 
-**Interaktive 3D-Raumansicht mit Etagen und raeumlicher Punktwolke**
+![Web dashboard: 3D view](assets/Screenshot-Webinterface_3D.png)
 
-![Web-Dashboard: 3D-Ansicht](assets/Screenshot-Webinterface_3D.png)
+It also provides a scan list, single-file downloads, a ZIP of all exports, an
+export trigger from the browser and the HTML report. The dashboard page is the
+counterpart for the throughput test, so keep it open while measuring.
 
-Zusaetzlich bietet es:
+> **Note:** The dashboard is meant for a trusted local network. It currently
+> has no PIN or read-only mode.
 
-- Scan-Liste
-- Einzel-Downloads
-- ZIP-Download aller Exporte
-- Export-Trigger vom Browser aus
+### Python receiver
 
-Hinweis: Das Dashboard ist fuer ein vertrauenswuerdiges lokales Netzwerk
-gedacht. Es hat derzeit keinen PIN/Read-only-Modus.
+`tools/receiver.py` receives the same live stream over UDP and shows 2D/3D
+views on the PC. It also handles live rooms, drill lines, AP fix, ping nodes,
+notes and clear packets on session reload.
 
-### Python-Receiver
+### Floor plan from the room mesh
 
-`tools/receiver.py` empfaengt denselben Live-Stream per UDP und zeigt 2D/3D-
-Ansichten auf dem PC. Es verarbeitet auch Live-Raeume, Bohrlinien, AP-Fix,
-Ping-Knoten, Notizen und Clear-Pakete beim Session-Reload.
+`tools/mesh_to_floorplan.py` derives a 2D wall plan from an exported
+`_roommesh.obj`:
+
+```bash
+python tools/mesh_to_floorplan.py scan_roommesh.obj -o plan --resolution 0.04
+```
 
 ---
 
-## Daten Vom Geraet Holen
+## Getting data off the device
 
-Per Skript:
+With the script:
 
 ```powershell
 .\tools\pull_scans.ps1
 ```
 
-Oder direkt per ADB:
+Or directly with ADB:
 
 ```bash
-adb pull /sdcard/Android/data/<package-name>/files/ ./
+adb pull /sdcard/Android/data/com.pwrcore.wifiscanner/files/ ./
 ```
 
-Das Web-Dashboard kann Exporte ebenfalls einzeln oder als ZIP herunterladen.
+The web dashboard can also download exports individually or as a ZIP.
 
 ---
 
-## Bekannte Risiken / Hinweise
+## Known limitations
 
-- **WiFi-Permission:** `ACCESS_FINE_LOCATION` muss gewaehlt sein, sonst werden
-  SSID/BSSID redaktiert und RSSI kann unbrauchbar sein (`<unknown ssid>`,
+- **Wi-Fi permission:** `ACCESS_FINE_LOCATION` must be granted, otherwise
+  SSID/BSSID are redacted and RSSI may be useless (`<unknown ssid>`,
   `-127` dBm).
-- **Android API:** `WifiManager.getConnectionInfo()` ist ab API 31 deprecated,
-  funktioniert aber auf getesteten Quest-Systemen. Falls ein OS-Update das
-  blockt, muss `WifiReader.cs` auf `ConnectivityManager` + `NetworkCallback` +
-  `getTransportInfo()` umgestellt werden.
-- **Tracking-Drift:** Bei langen Scans ueber mehrere Raeume kann Tracking-Drift
-  auftreten. Waehrend einer Aufnahme nicht recentern. Fuer spaeter geladene
-  Scans den Scan-Aligner verwenden.
-- **RSSI-Rauschen:** RSSI schwankt mehrere dB. `smoothingWindow` glaettet, und
-  revisited Punkte werden mit laufendem Mittelwert aktualisiert.
-- **Multi-Etage:** Die Live-Heatmap zeigt die aktive Etage; beim Export werden
-  Heatmap-PNGs und Georeferenz-JSONs fuer jede Etage geschrieben.
-- **Session-Reload:** Samples, Raeume, Etagen, Grid-Yaw sowie Tool-Sidecars
-  fuer Bohrlinien, Ping-Knoten, Durchsatzpunkte, Notizen und Messungen werden
-  wiederhergestellt. Der Scan-Aligner transformiert sie gemeinsam.
-- **Editor:** Passthrough, dynamische Occlusion und echte WiFi-Daten laufen nur
-  im Android-Build. Im Editor liefert `WifiReader` Fake-Werte, damit UI,
-  Punktwolke, Heatmap und Filter testbar bleiben.
+- **Android API:** `WifiManager.getConnectionInfo()` is deprecated since
+  API 31 but works on tested Quest OS versions. If an OS update blocks it,
+  `WifiReader.cs` must move to `ConnectivityManager` + `NetworkCallback` +
+  `getTransportInfo()`.
+- **Tracking drift:** long scans across many rooms can drift. Don't recenter
+  while recording, and use the scan aligner for reloaded scans.
+- **RSSI noise:** RSSI fluctuates by several dB. `smoothingWindow` smooths
+  readings, and revisited points are updated with a running average.
+- **Multiple floors:** the live heatmap shows the active floor; export writes
+  heatmap PNGs and georeference JSONs for every floor.
+- **Editor:** passthrough, dynamic occlusion and real Wi-Fi data only work in
+  the Android build. In the editor, `WifiReader` returns fake values so UI,
+  point cloud, heatmap and filters remain testable.
 
 ---
 
-## Naechste Sinnvolle Schritte
+## Roadmap
 
-1. Optionalen PIN- und Read-only-Modus fuer das Web-Dashboard ergaenzen.
-2. Weitere Geraetetestlaeufe mit unterschiedlichen Raumgroessen, Etagen und
-   WLAN-Topologien dokumentieren.
+1. Optional PIN and read-only mode for the web dashboard.
+2. Document more device test runs with different room sizes, floors and Wi-Fi
+   topologies.
+
+---
+
+## License
+
+[MIT](LICENSE)
