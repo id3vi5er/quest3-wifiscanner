@@ -29,7 +29,7 @@ namespace WifiScanner
         {
             "_rooms", "_drill", "_apfix", "_ping", "_notes", "_measure",
             "_heatmap", "_walls", "_report", "_coverage", "_roam",
-            "_throughput",
+            "_throughput", "_survey",
         };
 
         /// <summary>
@@ -77,12 +77,19 @@ namespace WifiScanner
             floors = null;
             gridYawDegrees = 0f;
             string path = Path.Combine(Application.persistentDataPath, $"{stem}.json");
-            if (!File.Exists(path)) return false;
+            if (!File.Exists(path))
+                return TryLoadSamplesCsv(stem, out samples);
             try
             {
                 var wrapper = JsonUtility.FromJson<SampleList>(File.ReadAllText(path));
                 if (wrapper?.samples == null) return false;
                 samples = wrapper.samples;
+                for (int i = 0; i < samples.Count; i++)
+                {
+                    var sample = samples[i];
+                    sample.NormalizeLegacyMetadata();
+                    samples[i] = sample;
+                }
                 floors = wrapper.floors != null && wrapper.floors.Count > 0
                     ? wrapper.floors : null;
                 gridYawDegrees = wrapper.gridYawDegrees;
@@ -93,6 +100,91 @@ namespace WifiScanner
                 Debug.LogWarning($"[DataExporter] Scan '{stem}' nicht lesbar: {e.Message}");
                 return false;
             }
+        }
+
+        // Header-based fallback keeps standalone pre-metadata CSV sessions
+        // importable. Unknown columns are ignored; missing aggregation fields
+        // are normalized to one measurement with unknown variance/quality.
+        private static bool TryLoadSamplesCsv(string stem, out List<Sample> samples)
+        {
+            samples = null;
+            string path = Path.Combine(Application.persistentDataPath, $"{stem}.csv");
+            if (!File.Exists(path)) return false;
+            try
+            {
+                string[] lines = File.ReadAllLines(path);
+                if (lines.Length < 2) return false;
+                var headers = SplitCsvLine(lines[0]);
+                var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < headers.Count; i++) index[headers[i]] = i;
+                var loaded = new List<Sample>();
+                var inv = System.Globalization.CultureInfo.InvariantCulture;
+                for (int line = 1; line < lines.Length; line++)
+                {
+                    if (string.IsNullOrWhiteSpace(lines[line])) continue;
+                    var v = SplitCsvLine(lines[line]);
+                    string Get(string name) => index.TryGetValue(name, out int i) &&
+                        i < v.Count ? v[i] : "";
+                    long.TryParse(Get("timestampMs"), out long timestamp);
+                    float.TryParse(Get("posX"), System.Globalization.NumberStyles.Float, inv, out float x);
+                    float.TryParse(Get("posY"), System.Globalization.NumberStyles.Float, inv, out float y);
+                    float.TryParse(Get("posZ"), System.Globalization.NumberStyles.Float, inv, out float z);
+                    int.TryParse(Get("rssiDbm"), out int rssi);
+                    int.TryParse(Get("linkSpeedMbps"), out int speed);
+                    int.TryParse(Get("frequencyMhz"), out int frequency);
+                    int.TryParse(Get("floor"), out int floor);
+                    int.TryParse(Get("sampleCount"), out int count);
+                    float.TryParse(Get("rssiMeanDbm"), System.Globalization.NumberStyles.Float, inv, out float mean);
+                    float.TryParse(Get("rssiM2"), System.Globalization.NumberStyles.Float, inv, out float m2);
+                    long.TryParse(Get("firstTimestampMs"), out long first);
+                    long.TryParse(Get("lastTimestampMs"), out long last);
+                    float tracking = -1f, alignment = -1f;
+                    if (!string.IsNullOrEmpty(Get("trackingQuality")))
+                        float.TryParse(Get("trackingQuality"), System.Globalization.NumberStyles.Float, inv, out tracking);
+                    if (!string.IsNullOrEmpty(Get("alignmentQuality")))
+                        float.TryParse(Get("alignmentQuality"), System.Globalization.NumberStyles.Float, inv, out alignment);
+                    var sample = new Sample
+                    {
+                        timestampMs=timestamp,posX=x,posY=y,posZ=z,rssiDbm=rssi,
+                        linkSpeedMbps=speed,frequencyMhz=frequency,ssid=Get("ssid"),
+                        bssid=Get("bssid"),floor=floor,sampleCount=count,
+                        rssiMeanDbm=mean,rssiM2=m2,firstTimestampMs=first,
+                        lastTimestampMs=last,trackingQuality=tracking,
+                        alignmentQuality=alignment,
+                    };
+                    sample.NormalizeLegacyMetadata();
+                    loaded.Add(sample);
+                }
+                samples = loaded;
+                return loaded.Count > 0;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[DataExporter] CSV '{stem}' nicht lesbar: {e.Message}");
+                return false;
+            }
+        }
+
+        private static List<string> SplitCsvLine(string line)
+        {
+            var fields = new List<string>();
+            var current = new StringBuilder();
+            bool quoted = false;
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (c == '"')
+                {
+                    if (quoted && i + 1 < line.Length && line[i + 1] == '"')
+                    { current.Append('"'); i++; }
+                    else quoted = !quoted;
+                }
+                else if (c == ',' && !quoted)
+                { fields.Add(current.ToString()); current.Clear(); }
+                else current.Append(c);
+            }
+            fields.Add(current.ToString());
+            return fields;
         }
 
         /// <summary>Reads a scan's rooms sidecar; false when absent/corrupt.</summary>
@@ -144,6 +236,8 @@ namespace WifiScanner
         {
             writtenLocal = default;
             string path = Path.Combine(Application.persistentDataPath, $"{stem}.json");
+            if (!File.Exists(path))
+                path = Path.Combine(Application.persistentDataPath, $"{stem}.csv");
             if (!File.Exists(path)) return false;
             writtenLocal = File.GetLastWriteTime(path);
             return true;
@@ -194,15 +288,23 @@ namespace WifiScanner
             var stems = new List<string>();
             try
             {
-                var files = Directory.GetFiles(Application.persistentDataPath, "*.json");
-                Array.Sort(files, (a, b) =>
+                var files = new List<string>(Directory.GetFiles(
+                    Application.persistentDataPath, "*.json"));
+                foreach (var csv in Directory.GetFiles(
+                    Application.persistentDataPath, "*.csv"))
+                {
+                    string json = Path.ChangeExtension(csv, ".json");
+                    if (!File.Exists(json)) files.Add(csv);
+                }
+                files.Sort((a, b) =>
                     File.GetLastWriteTimeUtc(b).CompareTo(File.GetLastWriteTimeUtc(a)));
                 foreach (var f in files)
                 {
                     string stem = Path.GetFileNameWithoutExtension(f);
                     // Per-storey heatmap metas (_heatmap_EG, _heatmap_OG1, …)
                     // carry a floor label after the suffix — EndsWith misses them.
-                    bool sidecar = stem.Contains("_heatmap_");
+                    bool sidecar = stem.Contains("_heatmap_") ||
+                                   stem.Contains("_survey_");
                     foreach (var suffix in SidecarSuffixes)
                         if (stem.EndsWith(suffix, StringComparison.Ordinal))
                         { sidecar = true; break; }

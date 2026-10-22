@@ -58,6 +58,8 @@ namespace WifiScanner
         public FloorManager floorManager;
         [Tooltip("Optional: exports and resets the dynamic environment-depth room mesh.")]
         public DynamicRoomMeshController dynamicRoomMesh;
+        [Tooltip("Optional guided survey/quality overlay and sidecar export.")]
+        public SurveyPlanController surveyPlan;
 
         [Header("Sampling")]
         [Tooltip("Minimum distance between points (m). A new point is only created " +
@@ -113,9 +115,9 @@ namespace WifiScanner
         // so any point within minPointSpacing lives in one of the 27 neighbours.
         private readonly Dictionary<Vector3Int, List<int>> _grid =
             new Dictionary<Vector3Int, List<int>>();
-        // Parallel to _samples: render handle and measurement count per point.
+        // Parallel to _samples: point-cloud render handles. Aggregation counts
+        // now live in Sample so they survive JSON export/load.
         private readonly List<int> _renderHandles = new List<int>();
-        private readonly List<int> _hitCounts = new List<int>();
         private float _timeSinceLastEval;
         private int _lastFloorVersion = -1;
 
@@ -174,7 +176,6 @@ namespace WifiScanner
 
             int index = _samples.Count;
             _samples.Add(sample);
-            _hitCounts.Add(1);
             AddToGrid(index, pos);
             RegisterBssid(in sample);
 
@@ -210,7 +211,6 @@ namespace WifiScanner
             var sample = Sample.Create(pos, wifi, floor);
             int index = _samples.Count;
             _samples.Add(sample);
-            _hitCounts.Add(1);
             AddToGrid(index, pos);
             RegisterBssid(in sample);
             _renderHandles.Add(-1); // no cloud sphere for scan-derived points
@@ -224,17 +224,13 @@ namespace WifiScanner
         // recolour it. Not re-streamed, to avoid duplicates on the PC viewer.
         private void UpdateSample(int i, int newRssi)
         {
-            int c = _hitCounts[i];
-            int avg = Mathf.RoundToInt((_samples[i].rssiDbm * c + newRssi) / (float)(c + 1));
-            _hitCounts[i] = c + 1;
-
             var s = _samples[i];
-            s.rssiDbm = avg;
+            s.FoldRssi(newRssi, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             _samples[i] = s;
             DataRevision++;
 
             if (pointCloud != null)
-                pointCloud.UpdatePoint(_renderHandles[i], avg);
+                pointCloud.UpdatePoint(_renderHandles[i], s.rssiDbm);
         }
 
         // ---- Spatial hash grid ----
@@ -331,7 +327,6 @@ namespace WifiScanner
             _samples.Clear();
             _grid.Clear();
             _renderHandles.Clear();
-            _hitCounts.Clear();
             _bssids.Clear();
             _bssidByKey.Clear();
             _rssiWindow.Clear();
@@ -373,6 +368,7 @@ namespace WifiScanner
             wallLoss?.ResetForNewSession();
             coverage?.ResetForNewSession();
             dynamicRoomMesh?.ClearMesh();
+            surveyPlan?.ResetForNewSession();
             UndoStack.Clear();
             DataExporter.DeleteExportStem(ResumePrompt.AutosaveStem);
 
@@ -395,9 +391,9 @@ namespace WifiScanner
             for (int i = 0; i < loaded.Count; i++)
             {
                 var s = loaded[i];
+                s.NormalizeLegacyMetadata();
                 var pos = new Vector3(s.posX, s.posY, s.posZ);
                 _samples.Add(s);
-                _hitCounts.Add(1);
                 AddToGrid(i, pos);
                 RegisterBssid(in s);
                 _renderHandles.Add(pointCloud != null
@@ -521,6 +517,7 @@ namespace WifiScanner
                 }
             }
             coverage?.ExportPng(stem); // null-op without rooms or AP source
+            surveyPlan?.Export(stem);
 
             // Combined view: heatmap as background, floor plan on top — both
             // layers share the grid-space georeference. The heatmap PNG is the

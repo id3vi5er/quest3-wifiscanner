@@ -15,11 +15,328 @@ namespace WifiScanner
     /// </summary>
     public static class SurveyAnalyzer
     {
+        public enum SurveyCellStatus
+        {
+            Unplanned,
+            Open,
+            Measured,
+            Sufficient,
+            Critical,
+            Unwalkable,
+        }
+
+        public enum SurveyLayerMode { Off, Progress, Confidence }
+
+        [System.Serializable]
+        public class QualityConfig
+        {
+            public float cellSize = 0.5f;
+            public float measurementRadius = 0.75f;
+            public int minimumEffectiveMeasurements = 3;
+            public float maximumRssiStdDev = 5f;
+            public float staleAfterMinutes = 60f;
+            public float targetMeasurementSpacing = 0.5f;
+        }
+
+        [System.Serializable]
+        public class CellQuality
+        {
+            public float score;
+            public float densityScore;
+            public float distanceScore;
+            public float stabilityScore = -1f;
+            public float freshnessScore;
+            public float trackingScore = -1f;
+            public float alignmentScore = -1f;
+            public float nearestSampleDistance = -1f;
+            public float rssiMeanDbm;
+            public float rssiVariance = -1f;
+            public float rssiStdDev = -1f;
+            public int effectiveMeasurements;
+            public int aggregatePoints;
+            public long newestTimestampMs;
+            public bool interpolated;
+            public bool stale;
+        }
+
+        [System.Serializable]
+        public class SurveyCell
+        {
+            public string id;
+            public int floor;
+            public string floorLabel;
+            public int roomIndex;
+            public string roomName;
+            public float centerX;
+            public float centerZ;
+            public float gridX;
+            public float gridZ;
+            public SurveyCellStatus status;
+            public string statusName;
+            public CellQuality quality;
+        }
+
+        [System.Serializable]
+        public class SurveyFloorResult
+        {
+            public int floor;
+            public string floorLabel;
+            public float cellSize;
+            public float gridYawDegrees;
+            public int totalCells;
+            public int openCells;
+            public int measuredCells;
+            public int sufficientCells;
+            public int criticalCells;
+            public int unwalkableCells;
+            public float completionPercent;
+            public float averageConfidence;
+            public bool valid;
+            public List<SurveyCell> cells = new List<SurveyCell>();
+        }
+
         public const int DefaultThresholdDbm = -75;
         private const float CellSize = 0.3f;
         private const float SampleRadius = 1.5f;
         private const float MinSamplesPerSqm = 0.5f;
         private const float MinMeasuredShare = 0.6f;
+
+        /// <summary>
+        /// Shared live/export survey calculation. Cells exist only inside the
+        /// traced room polygons. Unknown tracking/alignment values are omitted
+        /// from the weighted score instead of being treated as precise data.
+        /// </summary>
+        public static SurveyFloorResult BuildSurvey(
+            IReadOnlyList<Sample> samples, IReadOnlyList<RoomOutline> rooms,
+            int floorIndex, string floorLabel, float floorBaseY,
+            QualityConfig config, ISet<string> unwalkable = null,
+            string bssidFilter = null, long nowMs = 0,
+            float gridYawDegrees = 0f)
+        {
+            config ??= new QualityConfig();
+            float cell = Mathf.Max(0.1f, config.cellSize);
+            float radius = Mathf.Max(0.1f, config.measurementRadius);
+            nowMs = nowMs > 0 ? nowMs :
+                System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var result = new SurveyFloorResult
+            {
+                floor = floorIndex,
+                floorLabel = floorLabel ?? floorIndex.ToString(),
+                cellSize = cell,
+                gridYawDegrees = gridYawDegrees,
+            };
+            if (rooms == null || samples == null) return result;
+
+            // Candidate samples are storey- and (optionally) AP-exact.
+            var candidates = new List<Sample>();
+            for (int i = 0; i < samples.Count; i++)
+            {
+                var s = samples[i];
+                if (s.floor != floorIndex) continue;
+                if (!string.IsNullOrEmpty(bssidFilter) && s.bssid != bssidFilter)
+                    continue;
+                s.NormalizeLegacyMetadata();
+                candidates.Add(s);
+            }
+
+            for (int roomIndex = 0; roomIndex < rooms.Count; roomIndex++)
+            {
+                var room = rooms[roomIndex];
+                if (room?.cornersXZ == null || room.cornersXZ.Count < 3 ||
+                    Mathf.Abs(room.floorY - floorBaseY) > 1f)
+                    continue;
+                Vector2 firstGrid = RotateXZ(room.cornersXZ[0], -gridYawDegrees);
+                Vector2 min = firstGrid, max = min;
+                for (int i = 1; i < room.cornersXZ.Count; i++)
+                {
+                    Vector2 corner = RotateXZ(room.cornersXZ[i], -gridYawDegrees);
+                    min = Vector2.Min(min, corner);
+                    max = Vector2.Max(max, corner);
+                }
+                int x0 = Mathf.FloorToInt(min.x / cell);
+                int x1 = Mathf.CeilToInt(max.x / cell);
+                int z0 = Mathf.FloorToInt(min.y / cell);
+                int z1 = Mathf.CeilToInt(max.y / cell);
+                for (int z = z0; z < z1; z++)
+                for (int x = x0; x < x1; x++)
+                {
+                    var gridCenter = new Vector2((x + 0.5f) * cell,
+                                                 (z + 0.5f) * cell);
+                    Vector2 center = RotateXZ(gridCenter, gridYawDegrees);
+                    if (!PointInPolygon(center, room.cornersXZ)) continue;
+                    string id = $"{floorIndex}:{x}:{z}";
+                    var surveyCell = new SurveyCell
+                    {
+                        id = id,
+                        floor = floorIndex,
+                        floorLabel = result.floorLabel,
+                        roomIndex = roomIndex,
+                        roomName = string.IsNullOrEmpty(room.name)
+                            ? $"Room {roomIndex + 1}" : room.name,
+                        centerX = center.x,
+                        centerZ = center.y,
+                        gridX = gridCenter.x,
+                        gridZ = gridCenter.y,
+                    };
+                    surveyCell.quality = ComputeQuality(center, candidates,
+                        radius, config, nowMs);
+                    if (unwalkable != null && unwalkable.Contains(id))
+                        surveyCell.status = SurveyCellStatus.Unwalkable;
+                    else if (surveyCell.quality.effectiveMeasurements == 0)
+                        surveyCell.status = SurveyCellStatus.Open;
+                    else if (surveyCell.quality.effectiveMeasurements <
+                             config.minimumEffectiveMeasurements)
+                        surveyCell.status = SurveyCellStatus.Measured;
+                    else if (surveyCell.quality.rssiStdDev >= 0f &&
+                             surveyCell.quality.rssiStdDev <=
+                             config.maximumRssiStdDev &&
+                             surveyCell.quality.nearestSampleDistance <= radius)
+                        surveyCell.status = SurveyCellStatus.Sufficient;
+                    else
+                        surveyCell.status = SurveyCellStatus.Critical;
+                    surveyCell.statusName = surveyCell.status.ToString();
+                    result.cells.Add(surveyCell);
+                }
+            }
+            Summarize(result);
+            return result;
+        }
+
+        private static Vector2 RotateXZ(Vector2 value, float degrees)
+        {
+            double radians = degrees * (System.Math.PI / 180.0);
+            float sin = (float)System.Math.Sin(radians);
+            float cos = (float)System.Math.Cos(radians);
+            return new Vector2(value.x * cos + value.y * sin,
+                               -value.x * sin + value.y * cos);
+        }
+
+        private static CellQuality ComputeQuality(Vector2 center,
+            List<Sample> samples, float radius, QualityConfig config, long nowMs)
+        {
+            var q = new CellQuality();
+            float r2 = radius * radius;
+            // In the unfiltered "all APs" view, never interpret the level
+            // difference between neighbouring BSSIDs as temporal RSSI noise.
+            // Use the locally best-supported BSSID for density and variance.
+            var apCounts = new Dictionary<string, int>();
+            for (int i = 0; i < samples.Count; i++)
+            {
+                var s = samples[i];
+                float dx = s.posX - center.x, dz = s.posZ - center.y;
+                if (dx * dx + dz * dz > r2) continue;
+                string key = s.bssid ?? "";
+                apCounts.TryGetValue(key, out int count);
+                apCounts[key] = count + Mathf.Max(1, s.sampleCount);
+            }
+            string dominantBssid = null;
+            int dominantCount = -1;
+            foreach (var ap in apCounts)
+                if (ap.Value > dominantCount)
+                { dominantCount = ap.Value; dominantBssid = ap.Key; }
+
+            float nearest = float.MaxValue;
+            double mean = 0d, m2 = 0d;
+            int totalN = 0;
+            double trackingSum = 0d, alignmentSum = 0d;
+            int trackingN = 0, alignmentN = 0;
+            for (int i = 0; i < samples.Count; i++)
+            {
+                var s = samples[i];
+                if (dominantBssid != null && (s.bssid ?? "") != dominantBssid)
+                    continue;
+                float dx = s.posX - center.x, dz = s.posZ - center.y;
+                float dist2 = dx * dx + dz * dz;
+                if (dist2 > r2) continue;
+                float dist = Mathf.Sqrt(dist2);
+                if (dist < nearest) nearest = dist;
+                int n = Mathf.Max(1, s.sampleCount);
+                double sampleMean = s.sampleCount > 0 ? s.rssiMeanDbm : s.rssiDbm;
+                double sampleM2 = s.sampleCount > 1 ? Mathf.Max(0f, s.rssiM2) : 0d;
+                if (totalN == 0)
+                {
+                    mean = sampleMean;
+                    m2 = sampleM2;
+                    totalN = n;
+                }
+                else
+                {
+                    double delta = sampleMean - mean;
+                    int combined = totalN + n;
+                    mean += delta * n / combined;
+                    m2 += sampleM2 + delta * delta * totalN * n / combined;
+                    totalN = combined;
+                }
+                q.aggregatePoints++;
+                q.newestTimestampMs = System.Math.Max(q.newestTimestampMs,
+                    s.lastTimestampMs > 0 ? s.lastTimestampMs : s.timestampMs);
+                if (s.trackingQuality >= 0f)
+                { trackingSum += s.trackingQuality * n; trackingN += n; }
+                if (s.alignmentQuality >= 0f)
+                { alignmentSum += s.alignmentQuality * n; alignmentN += n; }
+            }
+            q.effectiveMeasurements = totalN;
+            q.nearestSampleDistance = nearest < float.MaxValue ? nearest : -1f;
+            q.interpolated = nearest > config.targetMeasurementSpacing;
+            if (totalN > 0) q.rssiMeanDbm = (float)mean;
+            if (totalN > 1)
+            {
+                q.rssiVariance = (float)(m2 / (totalN - 1));
+                q.rssiStdDev = Mathf.Sqrt(Mathf.Max(0f, q.rssiVariance));
+            }
+            q.densityScore = Mathf.Clamp01(totalN /
+                (float)Mathf.Max(1, config.minimumEffectiveMeasurements));
+            q.distanceScore = nearest < float.MaxValue
+                ? Mathf.Clamp01(1f - nearest / radius) : 0f;
+            if (q.rssiStdDev >= 0f)
+                q.stabilityScore = Mathf.Clamp01(1f - q.rssiStdDev /
+                    Mathf.Max(0.1f, config.maximumRssiStdDev * 2f));
+            float ageMinutes = q.newestTimestampMs > 0
+                ? Mathf.Max(0f, (nowMs - q.newestTimestampMs) / 60000f)
+                : config.staleAfterMinutes;
+            q.freshnessScore = Mathf.Clamp01(1f - ageMinutes /
+                Mathf.Max(1f, config.staleAfterMinutes));
+            q.stale = ageMinutes >= config.staleAfterMinutes;
+            if (trackingN > 0) q.trackingScore = (float)(trackingSum / trackingN);
+            if (alignmentN > 0) q.alignmentScore = (float)(alignmentSum / alignmentN);
+
+            float weighted = q.densityScore * 0.28f + q.distanceScore * 0.24f +
+                             q.freshnessScore * 0.14f;
+            float weights = 0.66f;
+            if (q.stabilityScore >= 0f)
+            { weighted += q.stabilityScore * 0.20f; weights += 0.20f; }
+            if (q.trackingScore >= 0f)
+            { weighted += q.trackingScore * 0.07f; weights += 0.07f; }
+            if (q.alignmentScore >= 0f)
+            { weighted += q.alignmentScore * 0.07f; weights += 0.07f; }
+            q.score = weights > 0f ? Mathf.Clamp01(weighted / weights) * 100f : 0f;
+            return q;
+        }
+
+        private static void Summarize(SurveyFloorResult result)
+        {
+            float confidence = 0f;
+            for (int i = 0; i < result.cells.Count; i++)
+            {
+                var c = result.cells[i];
+                switch (c.status)
+                {
+                    case SurveyCellStatus.Open: result.openCells++; break;
+                    case SurveyCellStatus.Measured: result.measuredCells++; break;
+                    case SurveyCellStatus.Sufficient: result.sufficientCells++; break;
+                    case SurveyCellStatus.Critical: result.criticalCells++; break;
+                    case SurveyCellStatus.Unwalkable: result.unwalkableCells++; break;
+                }
+                if (c.status != SurveyCellStatus.Unwalkable)
+                    confidence += c.quality.score;
+            }
+            result.totalCells = result.cells.Count;
+            int walkable = result.totalCells - result.unwalkableCells;
+            result.completionPercent = walkable > 0
+                ? result.sufficientCells * 100f / walkable : 0f;
+            result.averageConfidence = walkable > 0 ? confidence / walkable : 0f;
+            result.valid = walkable > 0 && result.sufficientCells == walkable;
+        }
 
         public class RoomFinding
         {

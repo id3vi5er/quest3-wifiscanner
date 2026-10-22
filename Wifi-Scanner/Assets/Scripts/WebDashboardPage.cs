@@ -104,8 +104,7 @@ namespace WifiScanner
     <option value='points' data-i18n='mode.points'>Messpunkte</option>
     <option value='heat' data-i18n='mode.heat'>Heatmap</option>
     <option value='forecast' data-i18n='mode.forecast'>Prognose</option>
-    <option value='3d' data-i18n='mode.rooms3d'>3D-R&auml;ume</option>
-    <option value='mesh' data-i18n='mode.mesh'>Live-Raummesh</option>
+    <option value='3d' data-i18n='mode.3d'>3D</option>
   </select>
   <select id='floor'><option value='all' data-i18n='floor.all'>Etage: Alle</option></select>
   <select id='ap'><option value='all' data-i18n='ap.all'>AP: Alle</option></select>
@@ -133,12 +132,14 @@ namespace WifiScanner
     <label><input type='checkbox' id='l_points' checked> <span data-i18n='layers.points'>Messpunkte</span></label>
     <label><input type='checkbox' id='l_trail' checked> <span data-i18n='layers.trail'>Laufpfad</span></label>
     <label><input type='checkbox' id='l_rooms' checked> <span data-i18n='layers.rooms'>R&auml;ume</span></label>
+    <label><input type='checkbox' id='l_mesh' checked> <span data-i18n='layers.mesh'>Raummesh</span></label>
     <label><input type='checkbox' id='l_pose' checked> <span data-i18n='layers.position'>Position</span></label>
     <label><input type='checkbox' id='l_ap' checked> <span data-i18n='layers.ap'>AP-Standorte</span></label>
     <label><input type='checkbox' id='l_ping' checked> <span data-i18n='layers.pings'>Pings</span></label>
     <label><input type='checkbox' id='l_throughput' checked> <span data-i18n='layers.throughput'>Durchsatz</span></label>
     <label><input type='checkbox' id='l_notes' checked> <span data-i18n='layers.notes'>Notizen</span></label>
     <label><input type='checkbox' id='l_roam' checked> <span data-i18n='layers.roaming'>Roaming</span></label>
+    <label><input type='checkbox' id='l_drill' checked> <span data-i18n='layers.drills'>Bohrungen</span></label>
     <h2 data-i18n='stats.title'>Statistik</h2>
     <div id='stats' style='font-size:12px;color:#aeb6c4;white-space:pre-line'></div>
   </div>
@@ -175,7 +176,7 @@ const I18N = {
   de: {
     'page.title':'WiFi-Scanner Dashboard', 'app.title':'WiFi-Scanner',
     'mode.points':'Messpunkte', 'mode.heat':'Heatmap', 'mode.forecast':'Prognose',
-    'mode.rooms3d':'3D-R\u00e4ume', 'mode.mesh':'Live-Raummesh',
+    'mode.3d':'3D',
     'mesh.empty':'Noch kein Raummesh empfangen \u2026',
     'orbit.help':'Ziehen = drehen, Rad/Pinch = Zoom',
     'mesh.triangles':'{0} Live-Dreiecke',
@@ -187,6 +188,7 @@ const I18N = {
     'status.disconnected':'getrennt', 'compare.before':'Vorher (Scan)',
     'compare.now':'Jetzt (live)', 'layers.title':'Ebenen',
     'layers.points':'Messpunkte', 'layers.trail':'Laufpfad', 'layers.rooms':'R\u00e4ume',
+    'layers.mesh':'Raummesh', 'layers.drills':'Bohrungen',
     'layers.position':'Position', 'layers.ap':'AP-Standorte', 'layers.pings':'Pings',
     'layers.throughput':'Durchsatz', 'layers.notes':'Notizen', 'layers.roaming':'Roaming',
     'stats.title':'Statistik', 'compare.scan':'Vergleichs-Scan (vorher)',
@@ -229,7 +231,7 @@ const I18N = {
   en: {
     'page.title':'WiFi Scanner Dashboard', 'app.title':'WiFi Scanner',
     'mode.points':'Measurement points', 'mode.heat':'Heatmap', 'mode.forecast':'Forecast',
-    'mode.rooms3d':'3D rooms', 'mode.mesh':'Live room mesh',
+    'mode.3d':'3D',
     'mesh.empty':'No room mesh received yet \u2026',
     'orbit.help':'Drag to rotate, wheel/pinch to zoom',
     'mesh.triangles':'{0} live triangles',
@@ -241,6 +243,7 @@ const I18N = {
     'status.disconnected':'disconnected', 'compare.before':'Before (scan)',
     'compare.now':'Now (live)', 'layers.title':'Layers',
     'layers.points':'Measurement points', 'layers.trail':'Walking trail', 'layers.rooms':'Rooms',
+    'layers.mesh':'Room mesh', 'layers.drills':'Drills',
     'layers.position':'Position', 'layers.ap':'AP locations', 'layers.pings':'Pings',
     'layers.throughput':'Throughput', 'layers.notes':'Notes', 'layers.roaming':'Roaming',
     'stats.title':'Statistics', 'compare.scan':'Reference scan (before)',
@@ -313,8 +316,8 @@ const S = { points:[], pose:null, rooms:[], apfix:null, apfixAll:null, pings:[],
 const S2 = { points:[], rooms:[], loaded:false, stem:'', gridYaw:0,
   hasGridYaw:false, alignX:0, alignZ:0, alignYaw:0, pivotX:0, pivotZ:0,
   error:null, alignmentSource:'', needsAuto:false }; // Vergleich (vorher)
-const L = { points:true, trail:true, rooms:true, pose:true, ap:true, ping:true,
-            throughput:true, notes:true, roam:true };
+const L = { points:true, trail:true, rooms:true, mesh:true, pose:true, ap:true,
+            ping:true, throughput:true, notes:true, roam:true, drill:true };
 let mode = 'points';
 let floorSel = 'all';
 let apSel = 'all';
@@ -1000,12 +1003,6 @@ function draw() {
     updateStats(pts.length);
     return;
   }
-  if (mode === 'mesh') {
-    cx.clearRect(0, 0, cv.width, cv.height);
-    drawRoomMesh();
-    updateStats(pts.length);
-    return;
-  }
   computeTransform(pts);
   cx.clearRect(0, 0, cv.width, cv.height);
 
@@ -1340,45 +1337,19 @@ function label(text, x, y, color) {
 let yaw3 = 0.8, pitch3 = 0.5, zoom3 = 1;
 const roomPalette = ['#5aa0d8', '#7cd85a', '#d8a05a', '#c05ad8', '#5ad8c8', '#d85a6e'];
 
-function drawRoomMesh() {
+function drawRoomMeshLayer(V) {
   const vertices = S.roommesh.v || [];
   const colors = S.roommesh.c || [];
-  if (vertices.length < 9) {
-    label(t('mesh.empty'), cv.width / 2, cv.height / 2, '#e0a03c');
-    return;
-  }
-
-  let sxm = 0, sym = 0, szm = 0;
-  const vertexCount = Math.floor(vertices.length / 3);
-  for (let i = 0; i + 2 < vertices.length; i += 3) {
-    sxm += vertices[i]; sym += vertices[i + 1]; szm += vertices[i + 2];
-  }
-  const ctr = { x:sxm / vertexCount, y:sym / vertexCount, z:szm / vertexCount };
-  let ext = 1;
-  for (let i = 0; i + 2 < vertices.length; i += 3)
-    ext = Math.max(ext, Math.abs(vertices[i] - ctr.x),
-      Math.abs(vertices[i + 1] - ctr.y), Math.abs(vertices[i + 2] - ctr.z));
-
-  const scale3 = Math.min(cv.width, cv.height) * 0.44 / ext * zoom3;
-  const cyaw = Math.cos(yaw3), syaw = Math.sin(yaw3);
-  const cp = Math.cos(pitch3), sp = Math.sin(pitch3);
-  const project = (x, y, z) => {
-    const dx = ctr.x - x, dy = y - ctr.y, dz = z - ctr.z;
-    const rx = dx * cyaw - dz * syaw;
-    const rz = dx * syaw + dz * cyaw;
-    const ry = dy * cp - rz * sp;
-    const depth = dy * sp + rz * cp;
-    return [cv.width / 2 + rx * scale3, cv.height / 2 - ry * scale3, depth];
-  };
+  if (!L.mesh || vertices.length < 9) return 0;
 
   const triangles = [];
   for (let i = 0, ci = 0; i + 8 < vertices.length; i += 9, ci += 9) {
     const centerY = (vertices[i + 1] + vertices[i + 4] + vertices[i + 7]) / 3;
     if (floorSel !== 'all' && floorBases.length &&
         floorIndexForY(centerY) !== parseInt(floorSel)) continue;
-    const a = project(vertices[i], vertices[i + 1], vertices[i + 2]);
-    const b = project(vertices[i + 3], vertices[i + 4], vertices[i + 5]);
-    const c = project(vertices[i + 6], vertices[i + 7], vertices[i + 8]);
+    const a = V(vertices[i], vertices[i + 1], vertices[i + 2]);
+    const b = V(vertices[i + 3], vertices[i + 4], vertices[i + 5]);
+    const c = V(vertices[i + 6], vertices[i + 7], vertices[i + 8]);
     const r = colors.length > ci + 8
       ? Math.round((colors[ci] + colors[ci + 3] + colors[ci + 6]) / 3) : 110;
     const g = colors.length > ci + 8
@@ -1404,26 +1375,53 @@ function drawRoomMesh() {
     cx.stroke();
   }
   cx.restore();
-  label(t('mesh.triangles', triangles.length), cv.width / 2, 18, '#8fd4ff');
-  label(t('orbit.help'), cv.width / 2, cv.height - 8, '#8a93a6');
+  return triangles.length;
 }
 
 function bounds3(pts) {
   let n = 0, sx3 = 0, sy3 = 0, sz3 = 0, ext = 1;
   const acc = (x, y, z) => { sx3 += x; sy3 += y; sz3 += z; n++; };
-  S.rooms.forEach(r => {
+  const floorY = floorSel !== 'all' && floorBases[parseInt(floorSel)] !== undefined
+    ? floorBases[parseInt(floorSel)] : 0;
+  if (L.rooms) S.rooms.filter(roomOnSelectedFloor).forEach(r => {
     const h = (r.height && r.height > 0.05) ? r.height : 2.5;
     (r.cornersXZ || []).forEach(c => { acc(c.x, r.floorY || 0, c.y); acc(c.x, (r.floorY || 0) + h, c.y); });
   });
-  pts.forEach(p => acc(p.x, p.y, p.z));
+  if (L.points) pts.forEach(p => acc(p.x, p.y, p.z));
+  if (L.mesh) {
+    const v = S.roommesh.v || [];
+    for (let i = 0; i + 2 < v.length; i += 9) {
+      const yy = v[i + 1];
+      if (floorSel === 'all' || !floorBases.length || floorIndexForY(yy) === parseInt(floorSel))
+        acc(v[i], yy, v[i + 2]);
+    }
+  }
+  if (L.trail) S.trail.forEach(p => acc(p.x, floorY + 0.05, p.z));
+  if (L.pose && S.pose) acc(S.pose.posX, S.pose.posY || floorY + 1.6, S.pose.posZ);
+  if (L.ping) S.pings.forEach(p => acc(p.posX, p.posY || floorY + 0.08, p.posZ));
+  if (L.throughput) S.throughput.forEach(p => acc(p.posX, p.posY || floorY + 0.1, p.posZ));
+  if (L.notes) S.notes.forEach(p => acc(p.posX, p.posY || floorY + 1, p.posZ));
+  if (L.roam) S.roams.forEach(p => acc(p.posX, p.posY || floorY + 0.1, p.posZ));
+  if (L.ap) {
+    if (S.apfixAll && S.apfixAll.length) S.apfixAll.forEach(p => acc(p.posX,p.posY,p.posZ));
+    else if (S.apfix) acc(S.apfix.posX,S.apfix.posY,S.apfix.posZ);
+  }
+  if (L.drill) S.drills.forEach(d => { const e=d.entry||{}; acc(e.x||0,e.y||0,e.z||0); });
   if (!n) return { x: 0, y: 0, z: 0, ext: 3 };
   const ctr = { x: sx3 / n, y: sy3 / n, z: sz3 / n };
   const d2 = (x, y, z) => Math.max(Math.abs(x - ctr.x), Math.abs(y - ctr.y), Math.abs(z - ctr.z));
-  S.rooms.forEach(r => {
+  if (L.rooms) S.rooms.filter(roomOnSelectedFloor).forEach(r => {
     const h = (r.height && r.height > 0.05) ? r.height : 2.5;
     (r.cornersXZ || []).forEach(c => { ext = Math.max(ext, d2(c.x, r.floorY || 0, c.y), d2(c.x, (r.floorY || 0) + h, c.y)); });
   });
-  pts.forEach(p => { ext = Math.max(ext, d2(p.x, p.y, p.z)); });
+  if (L.points) pts.forEach(p => { ext = Math.max(ext, d2(p.x, p.y, p.z)); });
+  if (L.mesh) { const v=S.roommesh.v||[]; for(let i=0;i+2<v.length;i+=3) {
+    if(floorSel!=='all'&&floorBases.length&&floorIndexForY(v[i+1])!==parseInt(floorSel))continue;
+    ext=Math.max(ext,d2(v[i],v[i+1],v[i+2])); } }
+  const grow = p => { if(p) ext=Math.max(ext,d2(p.posX,p.posY||floorY,p.posZ)); };
+  if(L.pose) grow(S.pose); if(L.ping) S.pings.forEach(grow);
+  if(L.throughput) S.throughput.forEach(grow); if(L.notes) S.notes.forEach(grow);
+  if(L.roam) S.roams.forEach(grow);
   ctr.ext = ext;
   return ctr;
 }
@@ -1439,14 +1437,22 @@ function draw3d(pts) {
     const rx = dx * cyaw - dz * syaw;
     const rz = dx * syaw + dz * cyaw;
     const ry = dy * cp - rz * sp;
-    return [cv.width / 2 + rx * scale3, cv.height / 2 - ry * scale3];
+    const depth = dy * sp + rz * cp;
+    return [cv.width / 2 + rx * scale3, cv.height / 2 - ry * scale3, depth];
   };
+  const meshTriangles = drawRoomMeshLayer(V);
   if (L.points) pts.forEach(p => {
     const q = V(p.x, p.y, p.z);
     cx.fillStyle = rssiColor(p.r);
     cx.fillRect(q[0] - 2, q[1] - 2, 4, 4);
   });
-  S.rooms.forEach((r, ri) => {
+  if (L.trail && S.trail.length > 1) {
+    const fy = floorSel !== 'all' && floorBases[parseInt(floorSel)] !== undefined
+      ? floorBases[parseInt(floorSel)] + 0.05 : 0.05;
+    cx.strokeStyle='#ff9d3c'; cx.lineWidth=2; cx.beginPath();
+    S.trail.forEach((p,i)=>{const q=V(p.x,fy,p.z);i?cx.lineTo(q[0],q[1]):cx.moveTo(q[0],q[1]);});cx.stroke();
+  }
+  if (L.rooms) S.rooms.filter(roomOnSelectedFloor).forEach((r, ri) => {
     const c = r.cornersXZ || [];
     if (c.length < 3) return;
     const y0 = r.floorY || 0;
@@ -1475,22 +1481,41 @@ function draw3d(pts) {
       label(r.name, q[0], q[1], '#8fd4ff');
     }
   });
-  if (L.ap && S.apfix) {
-    const q = V(S.apfix.posX, S.apfix.posY, S.apfix.posZ);
-    cx.fillStyle = '#00d2ff';
-    star(q[0], q[1], 5, 11, 5);
-    label((S.apfix.ssid || 'AP'), q[0], q[1] - 16, '#00d2ff');
+  if (L.ap) {
+    const aps = S.apfixAll && S.apfixAll.length ? S.apfixAll : (S.apfix ? [S.apfix] : []);
+    aps.forEach(ap => {
+      if(apSel!=='all' && ap.bssid!==apSel) return;
+      const q=V(ap.posX,ap.posY,ap.posZ);cx.fillStyle='#00d2ff';star(q[0],q[1],5,11,5);cx.fill();
+      label(ap.ssid||'AP',q[0],q[1]-16,'#00d2ff');
+    });
   }
   if (L.pose && S.pose) {
     const q = V(S.pose.posX, S.pose.posY || 1.6, S.pose.posZ);
     cx.fillStyle = '#25b7dd';
     cx.beginPath(); cx.arc(q[0], q[1], 5, 0, 7); cx.fill();
+    const a=(S.pose.yawDeg||0)*Math.PI/180;
+    const tip=V(S.pose.posX+Math.sin(a)*.5,S.pose.posY||1.6,S.pose.posZ+Math.cos(a)*.5);
+    cx.strokeStyle='#25b7dd';cx.lineWidth=2;cx.beginPath();cx.moveTo(q[0],q[1]);cx.lineTo(tip[0],tip[1]);cx.stroke();
   }
+  if(L.ping) S.pings.forEach(p=>{const q=V(p.posX,p.posY||0.08,p.posZ),ms=p.latencyMs;
+    cx.fillStyle=ms<0?'#cc2222':ms<50?'#22bb44':ms<120?'#e6b800':'#cc5522';cx.beginPath();cx.arc(q[0],q[1],6,0,7);cx.fill();
+    label(ms<0?t('common.error'):ms+' ms',q[0],q[1]-12,'#ddd');});
+  if(L.throughput) S.throughput.filter(p=>floorSel==='all'||String(p.floor||0)===String(floorSel)).forEach(p=>{
+    const q=V(p.posX,p.posY||.1,p.posZ),weak=Math.min(p.questToBrowserMbps||0,p.browserToQuestMbps||0);
+    cx.fillStyle=weak>=150?'#35e65b':weak>=50?'#f0c629':'#ef5348';cx.beginPath();cx.arc(q[0],q[1],7,0,7);cx.fill();
+    label('⇢'+(p.questToBrowserMbps||0).toFixed(0)+' ⇠'+(p.browserToQuestMbps||0).toFixed(0)+' Mbit/s',q[0],q[1]-15,'#dff5ff');});
+  if(L.notes) S.notes.forEach(n=>{const q=V(n.posX,n.posY||1,n.posZ);cx.fillStyle=n.type==='VirtualAp'?'#25b7dd':n.type==='Interference'?'#dd4433':'#ccc';cx.fillRect(q[0]-5,q[1]-5,10,10);if(n.text)label(n.text,q[0],q[1]-12,'#ddd');});
+  if(L.roam) S.roams.forEach(r=>{const q=V(r.posX,r.posY||.1,r.posZ);cx.fillStyle='#ff9d3c';cx.beginPath();cx.moveTo(q[0],q[1]-7);cx.lineTo(q[0]+7,q[1]);cx.lineTo(q[0],q[1]+7);cx.lineTo(q[0]-7,q[1]);cx.closePath();cx.fill();});
+  if(L.drill) S.drills.forEach(d=>{const e=d.entry||{},dir=d.direction||{},depth=d.depth||0;
+    const a=V(e.x||0,e.y||0,e.z||0),b=V((e.x||0)+(dir.x||0)*depth,(e.y||0)+(dir.y||0)*depth,(e.z||0)+(dir.z||0)*depth);
+    cx.strokeStyle='#f06ad7';cx.lineWidth=3;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);cx.stroke();});
+  if(L.mesh && meshTriangles===0) label(t('mesh.empty'),cv.width/2,18,'#e0a03c');
+  else if(L.mesh) label(t('mesh.triangles',meshTriangles),cv.width/2,18,'#8fd4ff');
   label(t('orbit.help'), cv.width / 2, cv.height - 8, '#8a93a6');
 }
 
 let dragging = false, lastX = 0, lastY = 0, lastPinch = 0, moved = false;
-function orbitMode() { return mode === '3d' || mode === 'mesh'; }
+function orbitMode() { return mode === '3d'; }
 cv.addEventListener('mousedown', e => { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; });
 window.addEventListener('mouseup', () => { dragging = false; });
 window.addEventListener('mousemove', e => {
@@ -1717,7 +1742,7 @@ function updateStats(shown) {
 }
 
 const sidecars = ['_rooms', '_drill', '_apfix', '_ping', '_notes', '_measure',
-  '_heatmap', '_walls', '_report', '_coverage', '_roam', '_throughput'];
+  '_heatmap', '_walls', '_report', '_coverage', '_roam', '_throughput', '_survey'];
 function isScanJson(name) {
   if (!name.endsWith('.json')) return false;
   const stem = name.slice(0, -5);

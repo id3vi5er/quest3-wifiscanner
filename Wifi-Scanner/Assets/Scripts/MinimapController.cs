@@ -1,3 +1,4 @@
+using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -52,6 +53,8 @@ namespace WifiScanner
         public ApLocator apLocator;
         [Tooltip("Optional: draws virtual-AP notes on the map (violet dots).")]
         public SpatialNoteManager spatialNotes;
+        [Tooltip("Independent guided-survey / confidence overlay.")]
+        public SurveyPlanController surveyPlan;
 
         [Header("Wrist panel placement (relative to the right controller)")]
         public Vector3 panelLocalPosition = new Vector3(0f, 0.04f, -0.06f);
@@ -105,6 +108,9 @@ namespace WifiScanner
         private RectTransform _rotator;
         private RawImage _map;
         private RawImage _floorPlan;
+        private RawImage _surveyOverlay;
+        private Texture2D _surveyOverlayTex;
+        private Color32[] _surveyOverlayPixels;
         private Texture2D _floorPlanTex;
         private Color32[] _floorPlanPixels;
         private RawImage _trail;
@@ -120,6 +126,11 @@ namespace WifiScanner
         private TextMeshProUGUI _placeholder;
         private TextMeshProUGUI _statusText;
         private TextMeshProUGUI _title;
+        private RawImage _legend;
+        private TextMeshProUGUI _legendLabel;
+        private Texture2D _rssiLegendTexture;
+        private SurveyAnalyzer.SurveyLayerMode _lastLegendMode =
+            (SurveyAnalyzer.SurveyLayerMode)(-1);
         private InputAction _toggleAction;
         private InputAction _zoomStick;
         private float _refreshTimer;
@@ -207,6 +218,21 @@ namespace WifiScanner
             mapRt.sizeDelta = new Vector2(maxMapUnits, maxMapUnits);
             _map.color = Color.white; // always fully opaque
             _map.enabled = false;
+
+            // Survey/quality is a separate transparent layer. Its own alpha is
+            // controlled exclusively by SurveyPlanController; the RSSI map,
+            // room outline, trail and background remain untouched.
+            var surveyGo = new GameObject("SurveyQuality", typeof(RectTransform));
+            surveyGo.transform.SetParent(mapGo.transform, false);
+            _surveyOverlay = surveyGo.AddComponent<RawImage>();
+            _surveyOverlay.raycastTarget = false;
+            Stretch(_surveyOverlay.rectTransform);
+            _surveyOverlayTex = new Texture2D(floorPlanResolution,
+                floorPlanResolution, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Point };
+            _surveyOverlayPixels = new Color32[floorPlanResolution * floorPlanResolution];
+            _surveyOverlay.texture = _surveyOverlayTex;
+            _surveyOverlay.enabled = false;
 
             // Room-outline overlay, stretched over the map so its pixels map
             // 1:1 onto the map's georeference.
@@ -301,24 +327,25 @@ namespace WifiScanner
 
             var legendGo = new GameObject("Legend", typeof(RectTransform));
             legendGo.transform.SetParent(canvasTr, false);
-            var legend = legendGo.AddComponent<RawImage>();
-            legend.texture = HeatmapLegend.CreateGradientTexture();
-            var lrt = legend.rectTransform;
+            _legend = legendGo.AddComponent<RawImage>();
+            _rssiLegendTexture = HeatmapLegend.CreateGradientTexture();
+            _legend.texture = _rssiLegendTexture;
+            var lrt = _legend.rectTransform;
             lrt.anchorMin = new Vector2(0f, 0f);
             lrt.anchorMax = new Vector2(1f, 0f);
             lrt.pivot = new Vector2(0.5f, 0f);
             lrt.offsetMin = new Vector2(15f, 24f);
             lrt.offsetMax = new Vector2(-15f, 36f);
 
-            var legendLabel = new GameObject("LegendLabel", typeof(RectTransform))
+            _legendLabel = new GameObject("LegendLabel", typeof(RectTransform))
                 .AddComponent<TextMeshProUGUI>();
-            legendLabel.transform.SetParent(canvasTr, false);
-            legendLabel.text = $"{HeatmapColorMapper.WeakDbm} dBm   →   " +
+            _legendLabel.transform.SetParent(canvasTr, false);
+            _legendLabel.text = $"{HeatmapColorMapper.WeakDbm} dBm   →   " +
                                $"{HeatmapColorMapper.StrongDbm} dBm";
-            legendLabel.fontSize = 12f;
-            legendLabel.color = new Color(1f, 1f, 1f, 0.7f);
-            legendLabel.alignment = TextAlignmentOptions.Center;
-            var llRt = legendLabel.rectTransform;
+            _legendLabel.fontSize = 12f;
+            _legendLabel.color = new Color(1f, 1f, 1f, 0.7f);
+            _legendLabel.alignment = TextAlignmentOptions.Center;
+            var llRt = _legendLabel.rectTransform;
             llRt.anchorMin = new Vector2(0f, 0f);
             llRt.anchorMax = new Vector2(1f, 0f);
             llRt.pivot = new Vector2(0.5f, 0f);
@@ -352,6 +379,8 @@ namespace WifiScanner
             if (_placeholder != null)
                 _placeholder.text = LocalizationManager.Get("minimap.no_data");
             RefreshStatus();
+            _lastLegendMode = (SurveyAnalyzer.SurveyLayerMode)(-1);
+            RefreshLegend();
         }
 
         /// <summary>Map zoom factor (1 = whole map fits, higher = zoomed in
@@ -414,6 +443,20 @@ namespace WifiScanner
             _statusText.text = LocalizationManager.Format("minimap.status",
                 rec, secs / 60, secs % 60, collector.LastRssi,
                 collector.SampleCount, ssid, storey);
+            if (surveyPlan != null && surveyPlan.TryGetCurrent(out var survey) &&
+                (surveyPlan.IsRunning || surveyPlan.Mode != SurveyAnalyzer.SurveyLayerMode.Off))
+            {
+                string confidence = survey.averageConfidence >= 70f
+                    ? LocalizationManager.Get("survey.confidence.high")
+                    : survey.averageConfidence >= 40f
+                        ? LocalizationManager.Get("survey.confidence.medium")
+                        : LocalizationManager.Get("survey.confidence.low");
+                _statusText.text += "\n" + LocalizationManager.Format(
+                    "survey.wrist_status", LocalizationManager.DisplayFloorLabel(
+                        survey.floorLabel), survey.completionPercent,
+                    survey.openCells + survey.measuredCells + survey.criticalCells,
+                    confidence);
+            }
         }
 
         // Re-reads the texture reference (recreated on area growth) and keeps
@@ -442,6 +485,7 @@ namespace WifiScanner
             if (!_hasMap)
             {
                 _floorPlan.enabled = false;
+                _surveyOverlay.enabled = false;
                 _trail.enabled = false;
                 _apOverlay.enabled = false;
                 return;
@@ -456,8 +500,95 @@ namespace WifiScanner
             _fittedMapSize = new Vector2(worldW * scale, worldH * scale);
 
             RedrawFloorPlan(worldMin, cell, w, h);
+            RedrawSurvey(worldMin, cell, w, h);
             RedrawTrail(worldMin, cell, w, h);
             RedrawApMarkers(worldMin, cell, w, h);
+            RefreshLegend();
+        }
+
+        private void RedrawSurvey(Vector2 worldMin, float cell, int w, int h)
+        {
+            SurveyAnalyzer.SurveyFloorResult result = null;
+            bool show = surveyPlan != null && surveyPlan.Mode !=
+                SurveyAnalyzer.SurveyLayerMode.Off &&
+                surveyPlan.TryGetCurrent(out result);
+            _surveyOverlay.enabled = show;
+            if (!show) return;
+            _surveyOverlay.color = new Color(1f, 1f, 1f, surveyPlan.CurrentOpacity);
+            Array.Clear(_surveyOverlayPixels, 0, _surveyOverlayPixels.Length);
+            int res = floorPlanResolution;
+            float mapW = w * cell, mapH = h * cell;
+            float half = result.cellSize * .5f;
+            foreach (var surveyCell in result.cells)
+            {
+                Vector2 lo = WorldToOverlayPx(new Vector2(surveyCell.centerX-half,
+                    surveyCell.centerZ-half), worldMin, mapW, mapH, res);
+                Vector2 hi = WorldToOverlayPx(new Vector2(surveyCell.centerX+half,
+                    surveyCell.centerZ+half), worldMin, mapW, mapH, res);
+                int x0=Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(lo.x,hi.x)),0,res-1);
+                int x1=Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(lo.x,hi.x)),0,res-1);
+                int y0=Mathf.Clamp(Mathf.FloorToInt(Mathf.Min(lo.y,hi.y)),0,res-1);
+                int y1=Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(lo.y,hi.y)),0,res-1);
+                for(int py=y0;py<=y1;py++) for(int px=x0;px<=x1;px++)
+                    _surveyOverlayPixels[py*res+px] = SurveyPlanController.ColorFor(
+                        surveyCell, surveyPlan.Mode, px, py);
+            }
+            if (surveyPlan.IsRunning)
+            {
+                var target = surveyPlan.FindNextCell();
+                if (target != null)
+                {
+                    Vector2 p = WorldToOverlayPx(new Vector2(target.centerX,target.centerZ),
+                        worldMin,mapW,mapH,res);
+                    PlotDisc(p,4.5f,new Color32(255,255,255,255),res,_surveyOverlayPixels);
+                    PlotDisc(p,2.5f,new Color32(20,30,40,255),res,_surveyOverlayPixels);
+                }
+            }
+            _surveyOverlayTex.SetPixels32(_surveyOverlayPixels);
+            _surveyOverlayTex.Apply(false);
+        }
+
+        private void RefreshLegend()
+        {
+            if (_legend == null || _legendLabel == null) return;
+            var mode = surveyPlan != null ? surveyPlan.Mode :
+                SurveyAnalyzer.SurveyLayerMode.Off;
+            if (mode == _lastLegendMode) return;
+            _lastLegendMode = mode;
+            if (mode == SurveyAnalyzer.SurveyLayerMode.Off)
+            {
+                _legend.texture = _rssiLegendTexture;
+                _legendLabel.text = $"{HeatmapColorMapper.WeakDbm} dBm   →   " +
+                                    $"{HeatmapColorMapper.StrongDbm} dBm";
+                return;
+            }
+            var tex = new Texture2D(64, 1, TextureFormat.RGBA32, false);
+            var pixels = new Color32[64];
+            for (int x=0;x<64;x++)
+            {
+                if (mode == SurveyAnalyzer.SurveyLayerMode.Confidence)
+                {
+                    var fake = new SurveyAnalyzer.SurveyCell
+                    { quality = new SurveyAnalyzer.CellQuality { score = x*100f/63f } };
+                    pixels[x] = SurveyPlanController.ColorFor(fake, mode);
+                }
+                else
+                {
+                    var statuses = new[] { SurveyAnalyzer.SurveyCellStatus.Open,
+                        SurveyAnalyzer.SurveyCellStatus.Measured,
+                        SurveyAnalyzer.SurveyCellStatus.Sufficient,
+                        SurveyAnalyzer.SurveyCellStatus.Critical };
+                    var fake = new SurveyAnalyzer.SurveyCell
+                    { status = statuses[Mathf.Min(3,x/16)], quality = new SurveyAnalyzer.CellQuality() };
+                    pixels[x] = SurveyPlanController.ColorFor(fake, mode);
+                }
+            }
+            tex.SetPixels32(pixels); tex.Apply(false);
+            if (_legend.texture != _rssiLegendTexture) Destroy(_legend.texture);
+            _legend.texture = tex;
+            _legendLabel.text = LocalizationManager.Get(mode ==
+                SurveyAnalyzer.SurveyLayerMode.Progress
+                ? "survey.legend.progress" : "survey.legend.confidence");
         }
 
         // Estimated AP positions (cyan, gated by the AP-locator toggle and its

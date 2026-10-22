@@ -113,10 +113,11 @@ Das Web-Dashboard bietet zudem einen formatierten HTML Report, der alle Daten ko
 
 ![HTML Report Vorschau](assets/html_report.png)
 
-Das Haupt-JSON enthaelt inzwischen auch `floors` und `gridYawDegrees`, damit
-Scans spaeter mit Etagen und Rasterausrichtung wiederhergestellt werden
-koennen. Aktueller Restpunkt: Drill-/Ping-/Notiz-/Mess-Sidecars werden zwar
-exportiert, aber noch nicht wieder in die In-App-Session geladen.
+Das Haupt-JSON enthaelt auch `floors` und `gridYawDegrees`, damit Scans spaeter
+mit Etagen und Rasterausrichtung wiederhergestellt werden koennen. Beim
+Session-Reload werden ausserdem die Tool-Sidecars fuer Bohrlinien,
+Ping-Knoten, Durchsatzpunkte, Notizen und Messungen wiederhergestellt und vom
+Scan-Aligner mittransformiert.
 
 ---
 
@@ -437,11 +438,11 @@ Das Web-Dashboard kann Exporte ebenfalls einzeln oder als ZIP herunterladen.
   Scans den Scan-Aligner verwenden.
 - **RSSI-Rauschen:** RSSI schwankt mehrere dB. `smoothingWindow` glaettet, und
   revisited Punkte werden mit laufendem Mittelwert aktualisiert.
-- **Multi-Etage:** Live-Heatmap und PNG-Export beziehen sich aktuell auf die
-  aktive Etage. Separate Heatmap-PNGs pro Etage sind als Restpunkt offen.
-- **Session-Reload:** Samples, Raeume, Etagen und Grid-Yaw werden geladen.
-  Sidecars fuer Bohrlinien, Ping-Knoten, Notizen und Messungen werden aktuell
-  nur exportiert, noch nicht wiederhergestellt.
+- **Multi-Etage:** Die Live-Heatmap zeigt die aktive Etage; beim Export werden
+  Heatmap-PNGs und Georeferenz-JSONs fuer jede Etage geschrieben.
+- **Session-Reload:** Samples, Raeume, Etagen, Grid-Yaw sowie Tool-Sidecars
+  fuer Bohrlinien, Ping-Knoten, Durchsatzpunkte, Notizen und Messungen werden
+  wiederhergestellt. Der Scan-Aligner transformiert sie gemeinsam.
 - **Editor:** Passthrough, dynamische Occlusion und echte WiFi-Daten laufen nur
   im Android-Build. Im Editor liefert `WifiReader` Fake-Werte, damit UI,
   Punktwolke, Heatmap und Filter testbar bleiben.
@@ -450,9 +451,6 @@ Das Web-Dashboard kann Exporte ebenfalls einzeln oder als ZIP herunterladen.
 
 ## Naechste Sinnvolle Schritte
 
-1. Sidecars (`_drill`, `_ping`, `_notes`, `_measure`) laden und beim
-   Scan-Ausrichten mittransformieren.
-2. Separate Heatmap-PNGs pro Etage exportieren.
-3. Das inzwischen lange Bedienpanel in Tabs oder kompakte Werkzeugseiten
-   aufteilen.
-4. Optionaler PIN/Read-only-Modus fuer das Web-Dashboard.
+1. Optionalen PIN- und Read-only-Modus fuer das Web-Dashboard ergaenzen.
+2. Weitere Geraetetestlaeufe mit unterschiedlichen Raumgroessen, Etagen und
+   WLAN-Topologien dokumentieren.

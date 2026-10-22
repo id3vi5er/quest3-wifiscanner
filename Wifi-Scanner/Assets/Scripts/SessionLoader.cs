@@ -37,6 +37,8 @@ namespace WifiScanner
         private readonly List<string> _stems = new List<string>();
         private int _stemIndex;
         private Coroutine _restream;
+        public int AlignmentCorrectionCount { get; private set; }
+        public float LastAlignmentQuality { get; private set; } = -1f;
 
         public IReadOnlyList<string> Stems => _stems;
         public string CurrentStem =>
@@ -102,6 +104,7 @@ namespace WifiScanner
             // Floors BEFORE samples: the point-cloud floor filter re-applies on
             // the FloorManager version bump and must see the new levels.
             floorManager?.LoadFloors(floors);
+            collector.surveyPlan?.ResetForNewSession();
             collector.LoadSamples(samples);
 
             if (roomTracer != null)
@@ -140,6 +143,8 @@ namespace WifiScanner
             UndoStack.Clear();
 
             floor?.SetGridYaw(yaw);
+            AlignmentCorrectionCount = 0;
+            LastAlignmentQuality = -1f;
             RestartRestream();
             Debug.Log($"[SessionLoader] Scan '{stem}' geladen: " +
                       $"{samples.Count} Punkte, " +
@@ -154,7 +159,8 @@ namespace WifiScanner
         /// rooms (corners, floorY, opening heights), floor levels and grid yaw.
         /// Runs the same load pipeline with transformed copies.
         /// </summary>
-        public void ApplySessionTransform(float deltaYawDegrees, Vector3 t)
+        public void ApplySessionTransform(float deltaYawDegrees, Vector3 t,
+            float alignmentQuality = -1f)
         {
             if (collector == null) return;
             streamer?.SendRaw("{\"type\":\"clear\",\"scope\":\"session\"}");
@@ -168,9 +174,16 @@ namespace WifiScanner
                 c.posX = p.x;
                 c.posY = p.y;
                 c.posZ = p.z;
+                if (alignmentQuality >= 0f)
+                    c.alignmentQuality = c.alignmentQuality >= 0f
+                        ? Mathf.Min(c.alignmentQuality, alignmentQuality)
+                        : alignmentQuality;
                 moved.Add(c);
             }
             collector.LoadSamples(moved);
+            collector.surveyPlan?.OnSessionAligned();
+            AlignmentCorrectionCount++;
+            LastAlignmentQuality = alignmentQuality;
 
             if (roomTracer != null)
             {

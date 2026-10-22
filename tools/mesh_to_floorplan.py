@@ -19,12 +19,20 @@ Example:
 from __future__ import annotations
 
 import argparse
+import base64
+import html
 import json
 import math
+import os
+import socket
+import ssl
+import struct
 import sys
+import time
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
+from urllib.parse import urlparse
 
 
 Vec3 = tuple[float, float, float]
@@ -64,6 +72,91 @@ def parse_obj(path: Path) -> tuple[list[Vec3], list[Face]]:
     if not vertices or not faces:
         raise ValueError("OBJ contains no usable vertices and triangular faces")
     return vertices, faces
+
+
+def roommesh_packet_to_triangles(packet: dict) -> tuple[list[Vec3], list[Face]]:
+    """Convert the dashboard's unindexed triangle soup to this script's mesh form."""
+    values = packet.get("v")
+    if not isinstance(values, list) or len(values) < 9 or len(values) % 9:
+        raise ValueError("roommesh packet contains no complete triangle vertices")
+    try:
+        vertices = [
+            (float(values[index]), float(values[index + 1]), float(values[index + 2]))
+            for index in range(0, len(values), 3)
+        ]
+    except (TypeError, ValueError) as error:
+        raise ValueError("roommesh packet has invalid vertex coordinates") from error
+    return vertices, [(index, index + 1, index + 2) for index in range(0, len(vertices), 3)]
+
+
+def receive_websocket_text(url: str) -> Iterator[str]:
+    """Yield text frames from the dashboard without requiring a Python package."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"ws", "wss"} or not parsed.hostname:
+        raise ValueError("websocket URL must look like ws://host:port/ws")
+    port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+    target = (parsed.path or "/") + (("?" + parsed.query) if parsed.query else "")
+    raw = socket.create_connection((parsed.hostname, port), timeout=10)
+    stream: socket.socket = (ssl.create_default_context().wrap_socket(raw,
+        server_hostname=parsed.hostname) if parsed.scheme == "wss" else raw)
+    stream.settimeout(None)
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request = (
+        f"GET {target} HTTP/1.1\r\nHost: {parsed.hostname}:{port}\r\n"
+        "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    )
+    stream.sendall(request.encode("ascii"))
+    response = bytearray()
+    while b"\r\n\r\n" not in response:
+        chunk = stream.recv(1024)
+        if not chunk:
+            raise ConnectionError("dashboard closed the WebSocket handshake")
+        response.extend(chunk)
+        if len(response) > 16384:
+            raise ConnectionError("invalid WebSocket handshake")
+    header_end = response.index(b"\r\n\r\n") + 4
+    headers = bytes(response[:header_end])
+    pending = bytearray(response[header_end:])
+    if not headers.startswith(b"HTTP/1.1 101"):
+        raise ConnectionError(headers.decode("iso-8859-1", "replace").split("\r\n", 1)[0])
+
+    def read_exact(count: int) -> bytes:
+        result = bytearray()
+        while len(result) < count:
+            if pending:
+                take = min(count - len(result), len(pending))
+                result.extend(pending[:take])
+                del pending[:take]
+            else:
+                chunk = stream.recv(count - len(result))
+                if not chunk:
+                    raise ConnectionError("dashboard closed the WebSocket")
+                result.extend(chunk)
+        return bytes(result)
+
+    try:
+        while True:
+            first, second = read_exact(2)
+            opcode, length = first & 0x0F, second & 0x7F
+            if length == 126:
+                length = struct.unpack("!H", read_exact(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", read_exact(8))[0]
+            masked = bool(second & 0x80)
+            mask = read_exact(4) if masked else b""
+            payload = bytearray(read_exact(length))
+            if masked:
+                for index in range(length):
+                    payload[index] ^= mask[index % 4]
+            if opcode == 0x8:
+                return
+            if opcode == 0x9:  # The server normally does not ping, but reply correctly.
+                stream.sendall(bytes((0x8A, len(payload))) + payload)
+            elif opcode == 0x1:
+                yield payload.decode("utf-8")
+    finally:
+        stream.close()
 
 
 def triangle_normal_area(a: Vec3, b: Vec3, c: Vec3) -> tuple[Vec3, float]:
@@ -470,10 +563,10 @@ def write_json(
         "format": "quest3-wifiscanner.mesh-floorplan.v1",
         "source": str(source.resolve()),
         "coordinateSystem": {
-            "plane": "OBJ X/Z",
+            "plane": "X/Z",
             "verticalAxis": "Y",
             "units": "meters",
-            "note": "OBJ X was already negated by the Quest exporter",
+            "note": "Live packets use Unity world coordinates; OBJ export negates X.",
         },
         "floorY": round(floor_y, 4),
         "ceilingY": round(ceiling_y, 4) if ceiling_y is not None else None,
@@ -530,7 +623,7 @@ def write_svg(
         f"viewBox=\"0 0 {svg_number(width_mm)} {svg_number(height_mm)}\" "
         f"width=\"{svg_number(width_mm)}mm\" height=\"{svg_number(height_mm)}mm\">\n"
         f"  <title>{title}</title>\n"
-        f"  <desc>Coordinates are millimetres; source OBJ uses metres in X/Z.</desc>\n"
+        f"  <desc>Coordinates are millimetres; source geometry uses metres in X/Z.</desc>\n"
         f"  <rect width=\"100%\" height=\"100%\" fill=\"white\"/>\n"
         f"  <path d=\"{' '.join(commands)}\" fill=\"#15181f\" "
         f"fill-rule=\"evenodd\" stroke=\"none\"/>\n"
@@ -539,11 +632,45 @@ def write_svg(
     path.write_text(svg, encoding="utf-8")
 
 
+def write_live_view(path: Path, svg_path: Path, websocket_url: str) -> None:
+    """Write a dependency-free browser view that keeps the generated SVG fresh."""
+    svg_name = html.escape(svg_path.name, quote=True)
+    source = html.escape(websocket_url)
+    document = f"""<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live-Grundriss</title>
+<style>
+  body {{ margin: 0; background: #10131a; color: #e8edf5; font: 15px system-ui, sans-serif; }}
+  header {{ padding: 12px 18px; display: flex; gap: 18px; align-items: baseline; }}
+  #state {{ color: #8fd4ff; }} small {{ color: #9aa6b5; }}
+  main {{ height: calc(100vh - 58px); display: grid; place-items: center; }}
+  img {{ max-width: calc(100vw - 30px); max-height: calc(100vh - 88px); background: white; }}
+</style>
+<header><strong>Live-Grundriss</strong><span id="state">Warte auf Mesh …</span>
+<small>{source}</small></header>
+<main><img id="plan" alt="Live-Grundriss"></main>
+<script>
+const image = document.getElementById('plan');
+const state = document.getElementById('state');
+function refresh() {{ image.src = '{svg_name}?t=' + Date.now(); }}
+image.onload = () => state.textContent = 'Letzte Karte: ' + new Date().toLocaleTimeString();
+image.onerror = () => state.textContent = 'Noch keine Karte erzeugt …';
+refresh(); setInterval(refresh, 1000);
+</script>
+</html>
+"""
+    path.write_text(document, encoding="utf-8")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Reconstruct a 2D wall floor plan from an OBJ room mesh."
+        description="Reconstruct a 2D wall floor plan from an OBJ or live dashboard mesh."
     )
-    parser.add_argument("obj", type=Path, help="input OBJ triangle mesh")
+    parser.add_argument("obj", type=Path, nargs="?", help="input OBJ triangle mesh")
+    parser.add_argument("--websocket", metavar="URL",
+                        help="read live roommesh packets, e.g. ws://192.168.137.22:8080/ws")
     parser.add_argument("-o", "--output", help="output base path (without extension)")
     parser.add_argument("--floor-y", type=float,
                         help="known floor Y in metres; default: automatic")
@@ -559,8 +686,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="minimum visual wall width in metres (default: 0.12)")
     parser.add_argument("--wall-normal-y", type=float, default=0.50,
                         help="maximum absolute wall normal Y (default: 0.50)")
-    parser.add_argument("--min-persistence", type=float, default=0.60,
-                        help="fraction of height slices required (default: 0.60)")
+    parser.add_argument("--min-persistence", type=float,
+                        help="fraction of height slices required (default: 0.60 for OBJ, 0.20 live)")
     parser.add_argument("--close-gap", type=float, default=0.16,
                         help="bridge wall gaps up to approximately this size (default: 0.16 m)")
     parser.add_argument("--min-component-cells", type=int, default=10,
@@ -570,21 +697,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    source = args.obj.resolve()
-    if not source.is_file():
-        print(f"error: input file does not exist: {source}", file=sys.stderr)
-        return 2
-    if args.resolution <= 0.0 or args.wall_width <= 0.0:
-        print("error: resolution and wall width must be positive", file=sys.stderr)
-        return 2
-    if not 0.0 < args.min_persistence <= 1.0:
-        print("error: min-persistence must be in (0, 1]", file=sys.stderr)
-        return 2
-
-    print(f"Reading {source} ...")
-    vertices, faces = parse_obj(source)
+def reconstruct_floorplan(vertices: Sequence[Vec3], faces: Sequence[Face], source: Path,
+                          args: argparse.Namespace) -> tuple[int, str]:
     detected_floor, detected_ceiling, peaks = detect_floor_and_ceiling(vertices, faces)
     floor_y = args.floor_y if args.floor_y is not None else detected_floor
     ceiling_y = args.ceiling_y if args.ceiling_y is not None else detected_ceiling
@@ -609,12 +723,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.min_component_length,
     )
     if not cells:
-        print(
-            "error: no persistent wall geometry remained; try lowering "
-            "--min-persistence or specify --floor-y",
-            file=sys.stderr,
-        )
-        return 1
+        return 1, "no persistent wall geometry remained"
     stats["closedWallCells"] = len(cells)
     stats["removedComponents"] = removed_components
     stats["meshVertices"] = len(vertices)
@@ -624,8 +733,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     contours_grid = trace_contours(cells)
     contours = world_contours(contours_grid, origin_x, origin_z, args.resolution)
     if not contours:
-        print("error: wall raster could not be converted to closed contours", file=sys.stderr)
-        return 1
+        return 1, "wall raster could not be converted to closed contours"
 
     base = output_base(source, args.output)
     base.parent.mkdir(parents=True, exist_ok=True)
@@ -645,10 +753,80 @@ def main(argv: Sequence[str] | None = None) -> int:
         json_path, source, contours, cells, origin_x, origin_z,
         args.resolution, floor_y, ceiling_y, heights, parameters, stats, peaks,
     )
-    print(
-        f"Floor plan: {len(cells):,} wall cells, {len(contours):,} contours\n"
-        f"SVG:  {svg_path}\nJSON: {json_path}"
-    )
+    return 0, (f"{len(cells):,} wall cells, {len(contours):,} contours; "
+               f"SVG: {svg_path}; JSON: {json_path}")
+
+
+def validate_args(args: argparse.Namespace) -> str | None:
+    if bool(args.obj) == bool(args.websocket):
+        return "provide exactly one input: OBJ path or --websocket URL"
+    if args.resolution <= 0.0 or args.wall_width <= 0.0:
+        return "resolution and wall width must be positive"
+    if args.min_persistence is not None and not 0.0 < args.min_persistence <= 1.0:
+        return "min-persistence must be in (0, 1]"
+    return None
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    error = validate_args(args)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    if args.obj:
+        if args.min_persistence is None:
+            args.min_persistence = 0.60
+        source = args.obj.resolve()
+        if not source.is_file():
+            print(f"error: input file does not exist: {source}", file=sys.stderr)
+            return 2
+        print(f"Reading {source} ...")
+        vertices, faces = parse_obj(source)
+        result, message = reconstruct_floorplan(vertices, faces, source, args)
+        if result:
+            print(f"error: {message}", file=sys.stderr)
+        else:
+            print(f"Floor plan: {message}")
+        return result
+
+    source = Path("live_dashboard_roommesh")
+    # The dashboard preview intentionally contains a small, changing subset of
+    # the reconstructed mesh.  Requiring a wall in 3/5 adjacent cuts is right
+    # for a complete OBJ, but rejects almost all of this sparse live geometry.
+    # Keep an explicit user value intact; relax only the live default.
+    if args.min_persistence is None:
+        args.min_persistence = 0.20
+        print("Live mode: using --min-persistence 0.20 for the sparse dashboard mesh.")
+    base = output_base(source, args.output)
+    base.parent.mkdir(parents=True, exist_ok=True)
+    view_path = base.with_name(base.name + "_live.html")
+    write_live_view(view_path, base.with_suffix(".svg"), args.websocket)
+    print(f"Waiting for live mesh at {args.websocket} (Ctrl+C to stop) ...")
+    print(f"Live view: {view_path.resolve()}")
+    last_packet: str | None = None
+    while True:
+        try:
+            for text in receive_websocket_text(args.websocket):
+                if text == last_packet:
+                    continue
+                try:
+                    packet = json.loads(text)
+                    if packet.get("type") != "roommesh":
+                        continue
+                    vertices, faces = roommesh_packet_to_triangles(packet)
+                    result, message = reconstruct_floorplan(vertices, faces, source, args)
+                    if result:
+                        print(f"Live mesh skipped: {message}", file=sys.stderr)
+                    else:
+                        print(f"Live floor plan updated: {message}")
+                    last_packet = text
+                except (ValueError, json.JSONDecodeError) as packet_error:
+                    print(f"Live mesh skipped: {packet_error}", file=sys.stderr)
+        except (ConnectionError, OSError, ValueError) as connection_error:
+            print(f"Live connection lost ({connection_error}); retrying in 2 seconds ...",
+                  file=sys.stderr)
+            time.sleep(2)
     return 0
 
 

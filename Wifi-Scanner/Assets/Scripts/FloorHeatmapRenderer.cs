@@ -30,6 +30,8 @@ namespace WifiScanner
         [Tooltip("Optional: multi-storey manager. The heatmap shows the active " +
                  "storey only (single plane) at that storey's base height.")]
         public FloorManager floorManager;
+        [Tooltip("Optional room polygons extend the raster into not-yet-visited zones.")]
+        public RoomTracer roomTracer;
 
         [Header("Material (URP Unlit asset, transparent)")]
         public Material floorMaterial;
@@ -81,6 +83,7 @@ namespace WifiScanner
         private float _timer;
         private int _lastRevision = -1;
         private int _lastFloorVersion = -1;
+        private int _lastRoomHash;
         private bool _rebuilding;
         private bool _warnedNoMaterial;
         private bool _hasFloorOverride;
@@ -290,7 +293,9 @@ namespace WifiScanner
 
             // DataRevision also bumps on running-average updates of existing
             // points, so revisited areas recolour without new points appearing.
-            if (collector.DataRevision == _lastRevision) return;
+            int roomHash = ComputeRoomHash();
+            if (collector.DataRevision == _lastRevision &&
+                roomHash == _lastRoomHash) return;
             _timer = 0f;
 
             if (collector.SampleCount == 0)
@@ -369,6 +374,7 @@ namespace WifiScanner
         {
             _rebuilding = true;
             _lastRevision = collector.DataRevision;
+            _lastRoomHash = ComputeRoomHash();
 
             // With multiple storeys the heatmap shows the active storey only —
             // a heatmap is inherently one horizontal plane. (The AP locator, by
@@ -483,6 +489,25 @@ namespace WifiScanner
             {
                 result.ok = false;
                 yield break;
+            }
+
+            // Keep unvisited portions of traced rooms visible as the existing
+            // grey gap cells. Room bounds only extend the raster; they never
+            // synthesize RSSI values.
+            if (roomTracer != null)
+            {
+                float activeBase = floorManager != null ? floorManager.ActiveBaseY : 0f;
+                foreach (var room in roomTracer.Rooms)
+                {
+                    if (filterFloor && Mathf.Abs(room.floorY - activeBase) > 1f)
+                        continue;
+                    foreach (var corner in room.cornersXZ)
+                    {
+                        Vector3 g = worldToGrid * new Vector3(corner.x, 0f, corner.y);
+                        minX = Mathf.Min(minX, g.x); maxX = Mathf.Max(maxX, g.x);
+                        minZ = Mathf.Min(minZ, g.z); maxZ = Mathf.Max(maxZ, g.z);
+                    }
+                }
             }
 
             minX -= padding; maxX += padding;
@@ -923,5 +948,25 @@ namespace WifiScanner
         }
 
         private static long HashKey(int x, int z) => ((long)x << 32) ^ (uint)z;
+
+        private int ComputeRoomHash()
+        {
+            if (roomTracer == null) return 0;
+            unchecked
+            {
+                int hash = 17;
+                foreach (var room in roomTracer.Rooms)
+                {
+                    hash = hash * 31 + room.cornersXZ.Count;
+                    hash = hash * 31 + Mathf.RoundToInt(room.floorY * 100f);
+                    foreach (var c in room.cornersXZ)
+                    {
+                        hash = hash * 31 + Mathf.RoundToInt(c.x * 100f);
+                        hash = hash * 31 + Mathf.RoundToInt(c.y * 100f);
+                    }
+                }
+                return hash;
+            }
+        }
     }
 }

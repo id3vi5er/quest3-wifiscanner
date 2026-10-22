@@ -265,7 +265,23 @@ namespace WifiScanner
             Vector3 p0 = r * new Vector3(_edgeCorner.x, 0f, _edgeCorner.y);
             var t = new Vector3(left.x - p0.x, dy, left.z - p0.z);
 
-            sessionLoader.ApplySessionTransform(deltaYaw, t);
+            // Transparent heuristic only: OpenXR does not expose a reliable
+            // scalar tracking-quality value here. Longer controller baselines
+            // are easier to orient; very large anchor/yaw corrections and
+            // repeated manual realignments reduce confidence.
+            float spanScore = Mathf.InverseLerp(minControllerDistance, 1.0f,
+                g.magnitude);
+            float anchorDistance = Vector2.Distance(_edgeCorner,
+                new Vector2(left.x, left.z));
+            float anchorScore = 1f - Mathf.InverseLerp(0.25f, 8f,
+                anchorDistance);
+            float angleScore = 1f - Mathf.Abs(deltaYaw) / 180f;
+            float correctionPenalty = 1f / (1f +
+                sessionLoader.AlignmentCorrectionCount * 0.15f);
+            float alignmentQuality = Mathf.Clamp01((spanScore * 0.45f +
+                anchorScore * 0.30f + angleScore * 0.25f) * correctionPenalty);
+
+            sessionLoader.ApplySessionTransform(deltaYaw, t, alignmentQuality);
             Haptics.PlaceRight();
             SetActive(false);
         }

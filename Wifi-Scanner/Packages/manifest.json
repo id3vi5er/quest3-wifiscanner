@@ -3,6 +3,7 @@
     "com.anatawa12.custom-localization-for-editor-extension": "1.2.1",
     "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main",
     "com.ramtype0.meshia.mesh-simplification": "https://github.com/RamType0/Meshia.MeshSimplification.git#3.1.0",
+    "com.unity.2d.sprite": "1.0.0",
     "com.unity.feature.development": "1.0.2",
     "com.unity.ide.rider": "3.0.40",
     "com.unity.inputsystem": "1.19.0",

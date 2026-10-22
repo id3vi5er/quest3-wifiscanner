@@ -47,6 +47,10 @@ namespace WifiScanner
                           "padding:10px 16px;margin:4px 8px 4px 0}");
             sb.AppendLine(".kpi b{display:block;font-size:1.3em}");
             sb.AppendLine(".muted{color:#9aa}");
+            sb.AppendLine(".survey-state{font-weight:800;padding:12px 16px;" +
+                          "border-radius:8px;margin:14px 0}.valid{background:#174d2b;" +
+                          "color:#9cffb8}.draft{background:#612526;color:#ffd0d0}" +
+                          ".manual{background:#5a4716;color:#ffe59a}");
             sb.AppendLine("</style></head><body>");
 
             // ---- Header + KPIs ----
@@ -76,6 +80,8 @@ namespace WifiScanner
                 sb.Append(Kpi($"{collector.roomTracer.Rooms.Count}",
                     T("report.kpi.rooms")));
             sb.AppendLine("</div>");
+
+            AppendSurveyValidity(sb, collector);
 
             // ---- Automatic findings (assessment, not just tables) ----
             AppendFindings(sb, collector);
@@ -308,6 +314,64 @@ namespace WifiScanner
             File.WriteAllText(path, sb.ToString());
             Debug.Log($"[ReportGenerator] Wrote survey report to {path}");
             return path;
+        }
+
+        private static void AppendSurveyValidity(StringBuilder sb,
+            SampleCollector collector)
+        {
+            var plan = collector.surveyPlan;
+            if (plan == null) return;
+            var floors = plan.AnalyzeAllFloors();
+            bool naturallyValid = floors.Count > 0;
+            foreach (var floor in floors) naturallyValid &= floor.valid;
+            bool manual = plan.IsCompleted && plan.ManuallyReleased &&
+                          !string.IsNullOrWhiteSpace(plan.ManualReleaseReason);
+            string css = naturallyValid ? "valid" : manual ? "manual" : "draft";
+            string label = naturallyValid ? T("report.survey.valid")
+                : manual ? T("report.survey.manual") : T("report.survey.draft");
+            sb.Append("<div class=\"survey-state ").Append(css).Append("\">")
+              .Append(Esc(label)).AppendLine("</div><ul>");
+            foreach (var floor in floors)
+            {
+                int outstanding = floor.openCells + floor.measuredCells +
+                                  floor.criticalCells;
+                sb.Append("<li>").Append(F("report.survey.summary",
+                    LocalizationManager.DisplayFloorLabel(floor.floorLabel),
+                    floor.completionPercent, outstanding,
+                    floor.averageConfidence)).AppendLine("</li>");
+                var rooms = new Dictionary<string, int[]>();
+                foreach (var cell in floor.cells)
+                {
+                    if (cell.status == SurveyAnalyzer.SurveyCellStatus.Unwalkable)
+                        continue;
+                    string room = cell.roomName ?? "?";
+                    if (!rooms.TryGetValue(room, out var counts))
+                        rooms[room] = counts = new int[2];
+                    counts[0]++;
+                    if (cell.status == SurveyAnalyzer.SurveyCellStatus.Sufficient)
+                        counts[1]++;
+                }
+                foreach (var room in rooms)
+                    sb.Append("<li style=\"margin-left:1.5em\">")
+                      .Append(F("report.survey.room", Esc(room.Key),
+                          room.Value[0] > 0 ? room.Value[1] * 100f / room.Value[0] : 0f,
+                          room.Value[1], room.Value[0])).AppendLine("</li>");
+                var lowest = new List<SurveyAnalyzer.SurveyCell>(floor.cells);
+                lowest.RemoveAll(c => c.status ==
+                    SurveyAnalyzer.SurveyCellStatus.Unwalkable);
+                lowest.Sort((a,b) => a.quality.score.CompareTo(b.quality.score));
+                for (int i = 0; i < Mathf.Min(3, lowest.Count); i++)
+                {
+                    var c = lowest[i];
+                    sb.Append("<li style=\"margin-left:1.5em\">")
+                      .Append(F("report.survey.low", Esc(c.roomName), c.centerX,
+                          c.centerZ, c.quality.score)).AppendLine("</li>");
+                }
+            }
+            sb.AppendLine("</ul>");
+            if (manual)
+                sb.Append("<p>").Append(F("report.survey.release",
+                    Esc(plan.ManualReleaseReason))).AppendLine("</p>");
         }
 
         // Renders the SurveyAnalyzer assessment as traffic-light bullets.

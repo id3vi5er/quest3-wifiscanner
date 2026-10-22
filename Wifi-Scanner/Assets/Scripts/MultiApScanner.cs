@@ -44,7 +44,9 @@ namespace WifiScanner
         [Tooltip("Spacing after a throttled request (Android budget: 4/2 min).")]
         public float throttledSpacing = 35f;
 
-        public bool enabledAtStart = true;
+        [Tooltip("Multi-AP remains available in the Scan menu, but starts off so " +
+                 "normal recording and Survey use the connected AP only.")]
+        public bool enabledAtStart = false;
 
         public bool IsEnabled { get; private set; }
         /// <summary>Distinct networks seen by scanning this session.</summary>

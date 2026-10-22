@@ -48,6 +48,7 @@ namespace WifiScanner
         public ThroughputTester throughputTester;
         public DynamicRoomMeshController dynamicRoomMesh;
         public NetworkStreamer streamer;
+        public SurveyPlanController surveyPlan;
         public int streamPort = 9999;
 
         [Header("Placement")]
@@ -97,6 +98,12 @@ namespace WifiScanner
         private TextMeshProUGUI _roomScanLabel;
         private TextMeshProUGUI _roomMeshVisibilityLabel;
         private TextMeshProUGUI _roomMeshColorLabel;
+        private TextMeshProUGUI _surveyModeValue;
+        private TextMeshProUGUI _surveyRunLabel;
+        private TextMeshProUGUI _surveyStatusLabel;
+        private UiCheckButton _surveyRunCheck;
+        private TMP_InputField _surveyReleaseReason;
+        private Slider _surveyOpacitySlider;
         private UiCheckButton _occlusionCheck;
         private UiCheckButton _roomScanCheck;
         private UiCheckButton _roomMeshVisibilityCheck;
@@ -118,7 +125,10 @@ namespace WifiScanner
         private float _throughputRequestUntil;
         private float _throughputInfoUntil;
         private string _throughputInfoText = "";
-        private string _bssidFilter = ""; // "" = alle APs (Parallel-Ansicht)
+        // Empty means "follow the currently connected AP". A non-empty value
+        // is an explicit historical/neighbor AP selection from the dropdown.
+        private string _bssidFilter = "";
+        private string _appliedBssidFilter;
         private GameObject _apListGo;     // AP-Dropdown (aufklappbare Liste)
         private int _apListCount = -1;
         private GameObject _floorListGo; // Etagen-Dropdown (aufklappbare Liste)
@@ -625,17 +635,49 @@ namespace WifiScanner
 
         private void OnCoverageClicked() => coverage?.Toggle();
 
-        private void OnMultiApClicked() => multiAp?.Toggle();
+        private void OnMultiApClicked()
+        {
+            multiAp?.Toggle();
+            surveyPlan?.ForceRebuild();
+        }
 
         private void OnAutosaveClicked() => bootstrap?.ToggleAutosave();
 
         private void OnRoomMeshOpacityChanged(float value01) =>
             dynamicRoomMesh?.SetMeshOpacity(value01);
 
+        private void OnSurveyModeClicked()
+        {
+            surveyPlan?.CycleMode();
+            if (_surveyOpacitySlider != null && surveyPlan != null)
+                _surveyOpacitySlider.SetValueWithoutNotify(surveyPlan.CurrentOpacity);
+        }
+
+        private void OnSurveyRunClicked()
+        {
+            if (surveyPlan == null) return;
+            if (surveyPlan.IsRunning) surveyPlan.StopSurvey();
+            else surveyPlan.StartSurvey();
+        }
+
+        private void OnSurveyOpacityChanged(float value01) =>
+            surveyPlan?.SetOpacity(value01);
+
+        private void OnSurveySpacingChanged(float value) =>
+            surveyPlan?.SetTargetSpacing(value);
+
+        private void OnSurveyCompleteClicked()
+        {
+            if (surveyPlan == null) return;
+            surveyPlan.CompleteSurvey(_surveyReleaseReason != null
+                ? _surveyReleaseReason.text : null);
+        }
+
         private void OnThroughputVisibilityClicked() => throughputTester?.ToggleVisible();
 
-        // AP dropdown: pick "Alle" (parallel view) or one BSSID — heatmap AND
-        // AP-locator icons follow the same selection.
+        // AP dropdown: follow the connected BSSID by default, or explicitly
+        // select one other BSSID. Heatmap, room-mesh colours and AP locator use
+        // the same effective selection.
         private void OnApDropdownClicked()
         {
             if (_apListGo == null) return;
@@ -647,12 +689,23 @@ namespace WifiScanner
         private void SetBssidFilter(string bssid)
         {
             _bssidFilter = bssid ?? "";
-            floor?.SetBssidFilter(_bssidFilter);
-            apLocator?.SetBssidFilter(_bssidFilter);
-            dynamicRoomMesh?.SetBssidFilter(_bssidFilter);
+            ApplyEffectiveBssidFilter();
         }
 
-        // One button per known AP (order of first appearance) + "Alle APs".
+        private void ApplyEffectiveBssidFilter()
+        {
+            string effective = _bssidFilter.Length > 0
+                ? _bssidFilter : (collector?.LastBssid ?? "");
+            if (string.Equals(effective, _appliedBssidFilter,
+                System.StringComparison.Ordinal)) return;
+            _appliedBssidFilter = effective;
+            floor?.SetBssidFilter(effective);
+            apLocator?.SetBssidFilter(effective);
+            dynamicRoomMesh?.SetBssidFilter(effective);
+            surveyPlan?.ForceRebuild();
+        }
+
+        // One button per known AP plus the automatic connected-AP selection.
         private void RebuildApList()
         {
             if (_apListGo == null || collector == null) return;
@@ -661,7 +714,7 @@ namespace WifiScanner
             foreach (Transform child in _apListGo.transform)
                 Destroy(child.gameObject);
 
-            AddListEntry(_apListGo.transform, F("ui.ap.all_entry", bssids.Count),
+            AddListEntry(_apListGo.transform, T("ui.ap.connected_entry"),
                 _bssidFilter.Length == 0, () =>
                 {
                     SetBssidFilter("");
@@ -808,6 +861,50 @@ namespace WifiScanner
                     RoomMeshColorMode.WifiSignal
                         ? "ui.room_mesh.color_wifi"
                         : "ui.room_mesh.color_normals");
+            if (surveyPlan != null)
+            {
+                if (_surveyModeValue != null)
+                    _surveyModeValue.text = T(surveyPlan.Mode switch
+                    {
+                        SurveyAnalyzer.SurveyLayerMode.Progress => "survey.mode.progress",
+                        SurveyAnalyzer.SurveyLayerMode.Confidence => "survey.mode.confidence",
+                        _ => "common.off",
+                    });
+                if (_surveyRunLabel != null)
+                {
+                    _surveyRunLabel.text = T("survey.run");
+                    _surveyRunCheck?.SetChecked(surveyPlan.IsRunning);
+                }
+                if (_surveyStatusLabel != null)
+                {
+                    if (!surveyPlan.TryGetCurrent(out var s))
+                        _surveyStatusLabel.text = T("survey.no_rooms");
+                    else
+                    {
+                        var text = new System.Text.StringBuilder(F(
+                            "survey.panel_status", s.completionPercent,
+                            s.openCells + s.measuredCells + s.criticalCells,
+                            s.averageConfidence));
+                        var rooms = new System.Collections.Generic.Dictionary<
+                            string, int[]>();
+                        foreach (var cell in s.cells)
+                        {
+                            if (cell.status == SurveyAnalyzer.SurveyCellStatus.Unwalkable)
+                                continue;
+                            if (!rooms.TryGetValue(cell.roomName, out var counts))
+                                rooms[cell.roomName] = counts = new int[2];
+                            counts[0]++;
+                            if (cell.status == SurveyAnalyzer.SurveyCellStatus.Sufficient)
+                                counts[1]++;
+                        }
+                        foreach (var room in rooms)
+                            text.Append("\n").Append(F("survey.room_status", room.Key,
+                                room.Value[0] > 0
+                                    ? room.Value[1] * 100f / room.Value[0] : 0f));
+                        _surveyStatusLabel.text = text.ToString();
+                    }
+                }
+            }
             if (_minimapLabel != null && minimap != null)
             {
                 _minimapLabel.text = T("ui.minimap.label");
@@ -856,6 +953,8 @@ namespace WifiScanner
             }
             if (_bssidLabel != null && collector != null)
             {
+                // In automatic mode this also follows roaming to a new BSSID.
+                ApplyEffectiveBssidFilter();
                 var bssids = collector.KnownBssids;
                 if (_bssidFilter.Length > 0)
                 {
@@ -866,7 +965,7 @@ namespace WifiScanner
                     if (selected == null)
                     {
                         SetBssidFilter("");
-                        _bssidLabel.text = F("ui.ap.all", bssids.Count);
+                        _bssidLabel.text = T("ui.ap.connected");
                     }
                     else
                     {
@@ -879,7 +978,7 @@ namespace WifiScanner
                 }
                 else
                 {
-                    _bssidLabel.text = F("ui.ap.all", bssids.Count);
+                    _bssidLabel.text = T("ui.ap.connected");
                 }
                 // Open dropdown follows new networks appearing.
                 if (_apListGo != null && _apListGo.activeSelf &&
@@ -1317,6 +1416,8 @@ namespace WifiScanner
                     multiApBackground[0], multiAp.IsEnabled);
             }
 
+            BuildSurveyScanControls(page);
+
             UiBuilder.AddHeader(page, T("ui.section.sessions"));
             if (sessionLoader != null)
             {
@@ -1355,6 +1456,41 @@ namespace WifiScanner
             note.color = new Color(1f, 1f, 1f, 0.45f);
         }
 
+        private void BuildSurveyScanControls(Transform page)
+        {
+            if (surveyPlan == null) return;
+            UiBuilder.AddHeader(page, T("survey.section"));
+            _surveyRunLabel = UiBuilder.AddButtonRow(page,
+                out Image[] surveyRunBackground,
+                (T("survey.run"), OnSurveyRunClicked))[0];
+            _surveyRunCheck = UiBuilder.MakeCheckButton(_surveyRunLabel,
+                surveyRunBackground[0], surveyPlan.IsRunning);
+            UiBuilder.AddSettingSliderRow(page, T("survey.spacing"), .25f,
+                1.5f, surveyPlan.quality.targetMeasurementSpacing, false,
+                OnSurveySpacingChanged);
+            _surveyStatusLabel = UiBuilder.AddText(page, T("survey.no_rooms"),
+                18f, FontStyles.Normal, TextAlignmentOptions.Left);
+            var hint = UiBuilder.AddText(page,
+                F("survey.critical_hint", surveyPlan.quality.maximumRssiStdDev),
+                15f, FontStyles.Normal, TextAlignmentOptions.Left);
+            hint.color = new Color(1f, 1f, 1f, 0.55f);
+            UiBuilder.AddButtonRow(page,
+                (T("survey.complete"), OnSurveyCompleteClicked));
+            _surveyReleaseReason = UiBuilder.AddTextField(page,
+                T("survey.release_reason"), "", null, null);
+        }
+
+        private void BuildSurveyViewControls(Transform page)
+        {
+            if (surveyPlan == null) return;
+            UiBuilder.AddHeader(page, T("survey.layer"));
+            _surveyModeValue = UiBuilder.AddValueButtonRow(page,
+                T("survey.layer"), T("common.off"), OnSurveyModeClicked);
+            _surveyOpacitySlider = UiBuilder.AddSettingSliderRow(page,
+                T("survey.opacity"), 0f, 1f,
+                surveyPlan.CurrentOpacity, false, OnSurveyOpacityChanged);
+        }
+
         private void BuildPageAnsicht(Transform page)
         {
             UiBuilder.AddHeader(page, T("ui.section.measurement_view"));
@@ -1379,6 +1515,8 @@ namespace WifiScanner
             UiBuilder.AddSliderRow(page, null, FilterRangeMin, FilterRangeMax,
                 _filterMax, true, OnFilterMaxChanged);
 
+            BuildSurveyViewControls(page);
+
             UiBuilder.AddHeader(page, T("ui.section.map_wifi"));
             var mapLabels = UiBuilder.AddButtonRow(page, out Image[] mapBackgrounds,
                 (T("ui.minimap.label"), OnMinimapClicked),
@@ -1399,7 +1537,7 @@ namespace WifiScanner
             _apCheck = UiBuilder.MakeCheckButton(_apLabel,
                 mapApBackgrounds[1], apLocator != null && apLocator.IsVisible);
             var bssidLabels = UiBuilder.AddButtonRow(page, out Image[] bssidBackgrounds,
-                (F("ui.ap.all", 0), OnApDropdownClicked),
+                (T("ui.ap.connected"), OnApDropdownClicked),
                 (F("ui.roaming.label", 0), OnRoamingClicked));
             _bssidLabel = bssidLabels[0];
             _roamLabel = bssidLabels[1];

@@ -322,6 +322,26 @@ namespace WifiScanner
                 roomTracer.streamer = streamer; // live floor plan on the PC
                 roomTracer.floorManager = floorManager; // work plane = active storey
                 _collector.roomTracer = roomTracer;
+                if (floor != null) floor.roomTracer = roomTracer;
+            }
+
+            // --- Independent survey progress / measurement confidence layer ---
+            SurveyPlanController surveyPlan = null;
+            SurveyCellTool surveyCellTool = null;
+            if (roomTracer != null && floor != null && floorMaterialOverride != null)
+            {
+                surveyPlan = gameObject.AddComponent<SurveyPlanController>();
+                surveyPlan.collector = _collector;
+                surveyPlan.roomTracer = roomTracer;
+                surveyPlan.floorManager = floorManager;
+                surveyPlan.floorHeatmap = floor;
+                surveyPlan.overlayMaterial = floorMaterialOverride;
+                _collector.surveyPlan = surveyPlan;
+                if (floorManager != null)
+                    floorManager.FloorInserted += surveyPlan.OnFloorInserted;
+                surveyCellTool = gameObject.AddComponent<SurveyCellTool>();
+                surveyCellTool.surveyPlan = surveyPlan;
+                surveyCellTool.visualMaterial = floorMaterialOverride;
             }
 
             // --- Drill planning + delete mode (need traced rooms) ---
@@ -360,6 +380,7 @@ namespace WifiScanner
                 minimap.drillPlanner = drill; // right stick belongs to drilling
                 minimap.collector = _collector; // status line under the map
                 minimap.floorManager = floorManager;
+                minimap.surveyPlan = surveyPlan;
             }
 
             // --- AP locator (passive: floating router icon at the estimate) ---
@@ -508,6 +529,8 @@ namespace WifiScanner
                 multiAp = gameObject.AddComponent<MultiApScanner>();
                 multiAp.collector = _collector;
             }
+            if (surveyPlan != null)
+                surveyPlan.multiAp = multiAp;
 
             // --- Roaming tracker (marks BSSID switches in the room) ---
             var roaming = gameObject.AddComponent<RoamingTracker>();
@@ -576,6 +599,8 @@ namespace WifiScanner
                 palette.pingTester = pingTester;
                 palette.deleteController = deleter;
                 palette.scanAligner = scanAligner;
+                palette.surveyPlan = surveyPlan;
+                palette.surveyCellTool = surveyCellTool;
             }
 
             // --- Interactive world-space control panel (menu button toggles) ---
@@ -608,6 +633,7 @@ namespace WifiScanner
                 panel.roaming = roaming;
                 panel.multiAp = multiAp;
                 panel.throughputTester = throughputTester;
+                panel.surveyPlan = surveyPlan;
             }
 
             Debug.Log("[SceneBootstrap] WiFi scanner initialised " +

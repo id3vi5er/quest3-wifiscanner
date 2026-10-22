@@ -32,6 +32,8 @@ namespace WifiScanner
         public PingTester pingTester;
         public DeleteController deleteController;
         public ScanAligner scanAligner;
+        public SurveyPlanController surveyPlan;
+        public SurveyCellTool surveyCellTool;
 
         [Header("Wrist panel placement (relative to the left controller)")]
         [Tooltip("Offset of the panel from the controller origin, in metres.")]
@@ -50,6 +52,7 @@ namespace WifiScanner
             public TextMeshProUGUI label;
             public string labelKey;
             public bool deleteStyle; // delete mode highlights reddish
+            public GameObject root;
         }
 
         private static readonly Color DeleteActiveColor = new Color(0.85f, 0.25f, 0.2f, 1f);
@@ -64,6 +67,7 @@ namespace WifiScanner
         private IExclusiveTool _optionsTool;
         private Image[] _optionImages;
         private Image _undoImage;
+        private Entry _surveyCellEntry;
         private InputAction _posAction;
         private InputAction _rotAction;
         private float _refreshTimer;
@@ -145,8 +149,13 @@ namespace WifiScanner
             AddToolButton(gridGo.transform, "tool.ping", pingTester);
             AddToolButton(gridGo.transform, "tool.delete", deleteController, deleteStyle: true);
             AddToolButton(gridGo.transform, "tool.align", scanAligner);
+            _surveyCellEntry = AddToolButton(gridGo.transform,
+                "tool.survey_cells", surveyCellTool);
             AddToolButton(gridGo.transform, "tool.off", null);
             AddUndoButton(gridGo.transform);
+            if (_surveyCellEntry != null)
+                _surveyCellEntry.root.SetActive(
+                    surveyPlan != null && surveyPlan.IsRunning);
 
             _optionsRoot = new GameObject("ToolOptions", typeof(RectTransform));
             _optionsRoot.transform.SetParent(content.transform, false);
@@ -216,6 +225,14 @@ namespace WifiScanner
 
             foreach (var e in _entries)
             {
+                if (ReferenceEquals(e, _surveyCellEntry))
+                {
+                    bool available = surveyPlan != null && surveyPlan.IsRunning;
+                    if (e.root.activeSelf != available) e.root.SetActive(available);
+                    if (!available && e.tool != null && e.tool.IsActive)
+                        e.tool.SetActive(false);
+                    if (!available) continue;
+                }
                 bool active = e.tool != null && e.tool.IsActive;
                 e.image.color = !active ? UiBuilder.ButtonColor
                     : e.deleteStyle ? DeleteActiveColor
@@ -230,12 +247,12 @@ namespace WifiScanner
         }
 
         // One grid cell. A null tool is the "✕ Aus" button (deactivate all).
-        private void AddToolButton(Transform parent, string labelKey,
+        private Entry AddToolButton(Transform parent, string labelKey,
             IExclusiveTool tool, bool deleteStyle = false)
         {
-            if (tool == null && labelKey != "tool.off") return; // feature disabled
+            if (tool == null && labelKey != "tool.off") return null; // feature disabled
             // Unity fake-null check for destroyed/missing components.
-            if (tool is Object obj && obj == null) return;
+            if (tool is Object obj && obj == null) return null;
 
             var go = new GameObject("ToolButton", typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -266,12 +283,10 @@ namespace WifiScanner
                 FontStyles.Normal, TextAlignmentOptions.Center);
             UiBuilder.Stretch(text.rectTransform);
 
-            if (tool != null)
-                _entries.Add(new Entry { tool = tool, image = img, label = text,
-                    labelKey = labelKey, deleteStyle = deleteStyle });
-            else
-                _entries.Add(new Entry { tool = null, image = img, label = text,
-                    labelKey = labelKey, deleteStyle = deleteStyle });
+            var entry = new Entry { tool = tool, image = img, label = text,
+                labelKey = labelKey, deleteStyle = deleteStyle, root = go };
+            _entries.Add(entry);
+            return entry;
         }
 
         private bool HasOptions(IExclusiveTool tool) =>
@@ -392,6 +407,8 @@ namespace WifiScanner
                 hint = openingTool.IsDoorMode
                     ? LocalizationManager.Get("tool.hint.door")
                     : LocalizationManager.Get("tool.hint.window");
+            else if (surveyCellTool != null && surveyCellTool.IsActive)
+                hint = LocalizationManager.Get("tool.hint.survey_cells");
             if (scanAligner != null && scanAligner.IsActive)
                 hint = scanAligner.CurrentPhase == ScanAligner.Phase.SelectWall
                     ? LocalizationManager.Get("tool.hint.align_select")

@@ -192,7 +192,7 @@ namespace WifiScanner
             return labels;
         }
 
-        public static void AddSliderRow(Transform parent, string label, float min,
+        public static Slider AddSliderRow(Transform parent, string label, float min,
             float max, float value, bool wholeNumbers,
             UnityEngine.Events.UnityAction<float> onChanged)
         {
@@ -254,6 +254,71 @@ namespace WifiScanner
             slider.wholeNumbers = wholeNumbers;
             slider.SetValueWithoutNotify(value);
             slider.onValueChanged.AddListener(onChanged);
+            return slider;
+        }
+
+        /// <summary>Settings-style row: option name left, slider right.</summary>
+        public static Slider AddSettingSliderRow(Transform parent, string label,
+            float min, float max, float value, bool wholeNumbers,
+            UnityEngine.Events.UnityAction<float> onChanged)
+        {
+            var row = new GameObject("SettingSliderRow", typeof(RectTransform));
+            row.transform.SetParent(parent, false);
+            row.AddComponent<LayoutElement>().preferredHeight = 58f;
+            var layout = row.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 14f;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = false;
+            layout.childAlignment = TextAnchor.MiddleCenter;
+            var text = AddText(row.transform, label, 19f, FontStyles.Normal,
+                TextAlignmentOptions.MidlineLeft);
+            var textLe = text.gameObject.AddComponent<LayoutElement>();
+            textLe.preferredWidth = 205f;
+            textLe.preferredHeight = 58f;
+            textLe.flexibleWidth = 1f;
+            var sliderHost = new GameObject("SliderHost", typeof(RectTransform));
+            sliderHost.transform.SetParent(row.transform, false);
+            var sliderLe = sliderHost.AddComponent<LayoutElement>();
+            sliderLe.preferredWidth = 210f;
+            sliderLe.preferredHeight = 36f;
+            sliderLe.flexibleWidth = 1f;
+            var sliderLayout = sliderHost.AddComponent<VerticalLayoutGroup>();
+            sliderLayout.childControlWidth = true;
+            sliderLayout.childControlHeight = true;
+            sliderLayout.childForceExpandWidth = true;
+            sliderLayout.childForceExpandHeight = false;
+            return AddSliderRow(sliderHost.transform, null, min, max, value,
+                wholeNumbers, onChanged);
+        }
+
+        /// <summary>Settings-style choice: option name left, value right.</summary>
+        public static TextMeshProUGUI AddValueButtonRow(Transform parent,
+            string label, string value, UnityEngine.Events.UnityAction onClick)
+        {
+            var go = new GameObject("ValueButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>().preferredHeight = 58f;
+            var image = go.AddComponent<Image>();
+            image.color = ButtonColor;
+            var button = go.AddComponent<Button>();
+            button.targetGraphic = image;
+            button.onClick.AddListener(onClick);
+            var layout = go.AddComponent<HorizontalLayoutGroup>();
+            layout.padding = new RectOffset(12, 12, 0, 0);
+            layout.spacing = 12f;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            var name = AddText(go.transform, label, 19f, FontStyles.Normal,
+                TextAlignmentOptions.MidlineLeft);
+            name.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            var selected = AddText(go.transform, value, 19f, FontStyles.Bold,
+                TextAlignmentOptions.MidlineRight);
+            selected.color = new Color(.48f,.78f,1f,1f);
+            selected.gameObject.AddComponent<LayoutElement>().preferredWidth = 190f;
+            return selected;
         }
 
         public static void Stretch(RectTransform rt)
