@@ -41,3 +41,16 @@ tools/scans/
 /Screenshot*.png
 Wifi-Scanner/Assets/Plugins/Android/*.DISABLED
 Wifi-Scanner/Assets/Plugins/Android/*.DISABLED.meta
+
+# Build/debug output that must not be versioned
+Wifi-Scanner/*_BurstDebugInformation_DoNotShip/
+Wifi-Scanner/tools/files/
+Wifi-Scanner/Assets/_Recovery/
+Wifi-Scanner/Assets/_Recovery.meta
+
+# Personal survey data (contains real SSID/BSSID and floor plans)
+tools/fullroom scan/
+tools/live_floorplan*
+tools/*_roommesh.obj
+Temp/
+.claude/

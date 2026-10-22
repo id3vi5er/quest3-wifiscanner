@@ -8,7 +8,7 @@ using UnityEngine.InputSystem;
 namespace WifiScanner
 {
     /// <summary>
-    /// Labels for WLAN-CSI tracking : streams the
+    /// Labels for WLAN-CSI tracking: streams the
     /// headset pose at a fixed rate with the Quest's own clock, so the PC
     /// recorder can line it up with the ESPectre CSI packets.
     ///

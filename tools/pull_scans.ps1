@@ -11,7 +11,7 @@ if (-not (Test-Path $adb)) {
     Write-Error "adb nicht gefunden: $adb"
 }
 
-$remote = "/sdcard/Android/data/com.DefaultCompany.VRTemplate/files/"
+$remote = "/sdcard/Android/data/com.pwrcore.wifiscanner/files/"
 $scansDir = Join-Path $PSScriptRoot "scans"
 New-Item -ItemType Directory -Force $scansDir | Out-Null
 
